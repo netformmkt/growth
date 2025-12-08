@@ -501,13 +501,15 @@
 
       const handleScoreChange = (criteriaId, value, maxScore) => {
         let numValue = value === '' ? 0 : parseInt(value);
-        const maxVal = maxScore * scoreMultiplier;
-        numValue = Math.max(0, Math.min(maxVal, numValue));
-        const baseValue = isCEO ? Math.round(numValue / 2) : numValue;
-        setCriteriaScores(prev => ({...prev, [criteriaId]: baseValue}));
+        // 모든 사람 동일하게 0~maxScore 범위로 입력
+        numValue = Math.max(0, Math.min(maxScore, numValue));
+        setCriteriaScores(prev => ({...prev, [criteriaId]: numValue}));
       };
 
-      const getTotalScore = () => Object.values(criteriaScores).reduce((a, b) => a + b, 0) * scoreMultiplier;
+      const getTotalScore = () => {
+        const baseTotal = Object.values(criteriaScores).reduce((a, b) => a + b, 0);
+        return isCEO ? baseTotal * 2 : baseTotal;
+      };
 
       const scoredPresenters = Object.keys(scores[quarter] || {}).filter(
         presenter => scores[quarter]?.[presenter]?.[currentUser]
@@ -586,25 +588,23 @@
                 </div>
               ) : (
                 <>
-                  {isCEO && <div style={styles.ceoNotice}>⭐ 대표님의 배점은 2배로 적용됩니다</div>}
+                  {isCEO && <div style={styles.ceoNotice}>⭐ 대표님의 배점은 총점에서 2배로 적용됩니다 (100점 → 200점)</div>}
                   
                   <div style={styles.criteriaList}>
                     {SCORING_CRITERIA.map(criteria => {
-                      const baseValue = criteriaScores[criteria.id] || 0;
-                      const displayValue = baseValue * scoreMultiplier;
-                      const maxDisplay = criteria.maxScore * scoreMultiplier;
+                      const currentValue = criteriaScores[criteria.id] || 0;
                       
                       return (
                         <div key={criteria.id} style={styles.criteriaItem}>
                           <div style={styles.criteriaHeader}>
                             <span style={styles.criteriaName}>{criteria.name}</span>
-                            <span style={styles.criteriaMax}>최대 {maxDisplay}점</span>
+                            <span style={styles.criteriaMax}>최대 {criteria.maxScore}점</span>
                           </div>
                           <div style={styles.scoreInputWrapper}>
                             <input
                               type="number"
                               inputMode="numeric"
-                              value={displayValue || ''}
+                              value={currentValue || ''}
                               placeholder="0"
                               onChange={(e) => handleScoreChange(criteria.id, e.target.value, criteria.maxScore)}
                               style={styles.scoreInput}
@@ -617,7 +617,7 @@
                   </div>
 
                   <div style={styles.totalBar}>
-                    <span style={styles.totalLabel}>총점</span>
+                    <span style={styles.totalLabel}>총점 {isCEO && '(x2 적용)'}</span>
                     <span style={styles.totalValue}>{getTotalScore()} <span style={styles.totalMax}>/ {maxTotalScore}점</span></span>
                   </div>
 
