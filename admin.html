@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>그로스보드 - Admin</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif; }
+    button:hover { opacity: 0.9; }
+    input:focus { border-color: #3182F6 !important; outline: none; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: #DDD; border-radius: 3px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const TEAMS_DATA = {
+      "대표이사실": ["이승우"],
+      "경영관리팀": ["신나영", "주유진", "이재훈"],
+      "서비스운영1팀": ["한준엽", "조재연", "정정훈", "한지혜"],
+      "서비스운영2팀": ["권정아", "김유림", "김수진"],
+      "브랜드마케팅팀": ["권혜영", "김범석", "함지민", "김소라"],
+      "미디어커머스": ["방현수", "김소연", "김송희", "이채은", "김채원", "쩐티리", "이란"],
+      "기술연구소": ["신명희", "심혜진", "김소정"],
+      "설계/적산": ["신수진", "김영성"],
+      "아파트스퀘어": ["한인규"],
+      "석민이앤씨": ["주현진", "송보람", "이필선", "김성민"]
+    };
+
+    const TEAM_COLORS = {
+      "대표이사실": "#191F28", "경영관리팀": "#3182F6", "서비스운영1팀": "#00C471",
+      "서비스운영2팀": "#9B59B6", "브랜드마케팅팀": "#FF6B6B", "미디어커머스": "#F39C12",
+      "기술연구소": "#1ABC9C", "설계/적산": "#E74C3C", "아파트스퀘어": "#3498DB", "석민이앤씨": "#8E44AD"
+    };
+
+    const REGULAR_TEAMS = Object.fromEntries(Object.entries(TEAMS_DATA).filter(([team]) => team !== "대표이사실"));
+
+    const getWeekInfo = (date = new Date()) => {
+      const d = new Date(date);
+      const dayOfWeek = d.getDay();
+      const friday = new Date(d);
+      const daysToFriday = (5 - dayOfWeek + 7) % 7;
+      const daysSinceFriday = (dayOfWeek + 2) % 7;
+      
+      if (dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 6) {
+        friday.setDate(d.getDate() - daysSinceFriday);
+      } else {
+        friday.setDate(d.getDate() + daysToFriday);
+      }
+      
+      const tuesday = new Date(friday); tuesday.setDate(friday.getDate() - 3);
+      const monday = new Date(friday); monday.setDate(friday.getDate() + 3);
+      
+      const year = friday.getFullYear();
+      const month = friday.getMonth() + 1;
+      const day = friday.getDate();
+      const weekId = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      
+      const tuesdayMonth = tuesday.getMonth() + 1;
+      const tuesdayDay = tuesday.getDate();
+      const mondayMonth = monday.getMonth() + 1;
+      const mondayDay = monday.getDate();
+      
+      let label = tuesdayMonth === mondayMonth ? `${tuesdayMonth}/${tuesdayDay}~${mondayDay}` : `${tuesdayMonth}/${tuesdayDay}~${mondayMonth}/${mondayDay}`;
+      return { weekId, fridayDate: `${month}/${day}`, label };
+    };
+
+    const generateRecentWeeks = (count = 5) => {
+      const weeks = []; const today = new Date(); const seen = new Set();
+      for (let i = 0; i < count + 2; i++) {
+        const targetDate = new Date(today); targetDate.setDate(today.getDate() - (i * 7));
+        const weekInfo = getWeekInfo(targetDate);
+        if (!seen.has(weekInfo.weekId)) { seen.add(weekInfo.weekId); weeks.unshift(weekInfo); }
+        if (weeks.length >= count) break;
+      }
+      return weeks.slice(-count);
+    };
+
+    const generateInitialUploadStatus = () => {
+      const status = {}; const weeks = generateRecentWeeks(5);
+      Object.entries(REGULAR_TEAMS).forEach(([team, members]) => {
+        members.forEach(member => {
+          const memberWeeks = {};
+          weeks.forEach((week, idx) => { memberWeeks[week.weekId] = Math.random() > (idx === weeks.length - 1 ? 0.4 : 0.25); });
+          status[member] = { team, weeks: memberWeeks };
+        });
+      });
+      return status;
+    };
+
+    const STORAGE_KEYS = {
+      UPLOAD_STATUS: 'growthboard_upload_v4',
+      SCORES: 'growthboard_scores_v4',
+      GROWTHDAY_ACTIVE: 'growthboard_growthday_active_v4',
+      GROWTHDAY_QUARTER: 'growthboard_growthday_quarter_v4',
+      ADMIN_LOGGED_IN: 'growthboard_admin_logged_in'
+    };
+
+    function App() {
+      const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem(STORAGE_KEYS.ADMIN_LOGGED_IN) === 'true');
+      const [currentTab, setCurrentTab] = useState('dashboard');
+      const [uploadStatus, setUploadStatus] = useState(() => {
+        const saved = localStorage.getItem(STORAGE_KEYS.UPLOAD_STATUS);
+        return saved ? JSON.parse(saved) : generateInitialUploadStatus();
+      });
+      const [scores, setScores] = useState(() => {
+        const saved = localStorage.getItem(STORAGE_KEYS.SCORES);
+        return saved ? JSON.parse(saved) : {};
+      });
+      const [growthdayActive, setGrowthdayActive] = useState(() => {
+        const saved = localStorage.getItem(STORAGE_KEYS.GROWTHDAY_ACTIVE);
+        return saved ? JSON.parse(saved) : false;
+      });
+      const [growthdayQuarter, setGrowthdayQuarter] = useState(() => localStorage.getItem(STORAGE_KEYS.GROWTHDAY_QUARTER) || '');
+      
+      const weeks = generateRecentWeeks(5);
+      const [selectedWeek, setSelectedWeek] = useState(weeks[weeks.length - 1]?.weekId || '');
+      const [toast, setToast] = useState(null);
+      const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
+      const [showMissingModal, setShowMissingModal] = useState(false);
+      const [showGrowthdayModal, setShowGrowthdayModal] = useState(false);
+
+      useEffect(() => { localStorage.setItem(STORAGE_KEYS.UPLOAD_STATUS, JSON.stringify(uploadStatus)); }, [uploadStatus]);
+      useEffect(() => { localStorage.setItem(STORAGE_KEYS.SCORES, JSON.stringify(scores)); }, [scores]);
+      useEffect(() => { localStorage.setItem(STORAGE_KEYS.GROWTHDAY_ACTIVE, JSON.stringify(growthdayActive)); }, [growthdayActive]);
+      useEffect(() => { localStorage.setItem(STORAGE_KEYS.GROWTHDAY_QUARTER, growthdayQuarter); }, [growthdayQuarter]);
+      useEffect(() => { localStorage.setItem(STORAGE_KEYS.ADMIN_LOGGED_IN, isLoggedIn.toString()); }, [isLoggedIn]);
+
+      const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 2500); };
+
+      const handleUploadToggle = (member, weekId) => {
+        setUploadStatus(prev => ({
+          ...prev,
+          [member]: { ...prev[member], weeks: { ...prev[member]?.weeks, [weekId]: !prev[member]?.weeks?.[weekId] } }
+        }));
+        showToast(`${member}님의 업로드 상태가 변경되었습니다`);
+      };
+
+      const handleGrowthdayStart = (year, quarter) => {
+        const quarterStr = `${year}년 ${quarter}분기`;
+        setGrowthdayQuarter(quarterStr);
+        setGrowthdayActive(true);
+        setShowGrowthdayModal(false);
+        showToast(`${quarterStr} 그로스데이가 시작되었습니다`);
+      };
+
+      const handleGrowthdayStop = () => {
+        setGrowthdayActive(false);
+        showToast('그로스데이가 종료되었습니다');
+      };
+
+      const getStats = () => {
+        const totalMembers = Object.keys(uploadStatus).length;
+        const currentWeekUploads = Object.values(uploadStatus).filter(s => s.weeks?.[selectedWeek]).length;
+        const teamStats = {};
+        Object.entries(REGULAR_TEAMS).forEach(([team, members]) => {
+          const uploaded = members.filter(m => uploadStatus[m]?.weeks?.[selectedWeek]).length;
+          teamStats[team] = { total: members.length, uploaded, rate: Math.round((uploaded / members.length) * 100) };
+        });
+        const missingMembers = [];
+        Object.entries(uploadStatus).forEach(([name, data]) => {
+          if (!data.weeks?.[selectedWeek]) missingMembers.push({ name, team: data.team });
+        });
+        return { totalMembers, currentWeekUploads, overallRate: Math.round((currentWeekUploads / totalMembers) * 100), teamStats, missingMembers };
+      };
+
+      const getGrowthdayStats = () => {
+        const quarterScores = scores[growthdayQuarter] || {};
+        const results = [];
+        Object.entries(quarterScores).forEach(([presenter, voters]) => {
+          const voterList = Object.entries(voters);
+          if (voterList.length === 0) return;
+          let totalWeightedScore = 0, totalWeight = 0;
+          voterList.forEach(([voter, data]) => {
+            const baseScore = Object.values(data.scores).reduce((a, b) => a + b, 0);
+            const weight = data.isCEO ? 2 : 1;
+            totalWeightedScore += baseScore * weight;
+            totalWeight += weight;
+          });
+          const averageScore = totalWeight > 0 ? totalWeightedScore / totalWeight : 0;
+          const team = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(presenter))?.[0] || '';
+          const ceoVoted = voterList.some(([voter, data]) => data.isCEO);
+          results.push({ name: presenter, team, voterCount: voterList.length, averageScore: averageScore.toFixed(1), ceoVoted });
+        });
+        return results.sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+      };
+
+      const stats = getStats();
+      const growthdayStats = getGrowthdayStats();
+
+      if (!isLoggedIn) {
+        return <AdminLoginScreen onLogin={() => setIsLoggedIn(true)} />;
+      }
+
+      const styles = getStyles();
+
+      return (
+        <div style={styles.container}>
+          {toast && <div style={styles.toast}>✓ {toast}</div>}
+
+          {showMissingModal && (
+            <div style={styles.modalOverlay} onClick={() => setShowMissingModal(false)}>
+              <div style={styles.modal} onClick={e => e.stopPropagation()}>
+                <div style={styles.modalHeader}>
+                  <h3 style={styles.modalTitle}>미업로드 인원 <span style={styles.modalCount}>{stats.missingMembers.length}명</span></h3>
+                  <button style={styles.modalClose} onClick={() => setShowMissingModal(false)}>✕</button>
+                </div>
+                <div style={styles.modalSubtitle}>{weeks.find(w => w.weekId === selectedWeek)?.label} (금 {weeks.find(w => w.weekId === selectedWeek)?.fridayDate}) 기준</div>
+                <div style={styles.missingList}>
+                  {stats.missingMembers.length === 0 ? (
+                    <div style={styles.emptyMissing}>✓ 모든 인원이 업로드를 완료했습니다!</div>
+                  ) : (
+                    Object.entries(REGULAR_TEAMS).map(([team, members]) => {
+                      const missingInTeam = stats.missingMembers.filter(m => m.team === team);
+                      if (missingInTeam.length === 0) return null;
+                      return (
+                        <div key={team} style={styles.missingTeamGroup}>
+                          <div style={styles.missingTeamHeader}>
+                            <div style={{...styles.teamDot, backgroundColor: TEAM_COLORS[team]}} />
+                            <span>{team}</span>
+                            <span style={styles.missingTeamCount}>{missingInTeam.length}명</span>
+                          </div>
+                          <div style={styles.missingMembers}>
+                            {missingInTeam.map(member => (
+                              <div key={member.name} style={styles.missingMember}>
+                                <span>{member.name}</span>
+                                <button style={styles.quickCheckBtn} onClick={() => handleUploadToggle(member.name, selectedWeek)}>완료 처리</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showGrowthdayModal && (
+            <GrowthdayStartModal onClose={() => setShowGrowthdayModal(false)} onStart={handleGrowthdayStart} />
+          )}
+
+          <header style={styles.header}>
+            <div style={styles.headerContent}>
+              <div style={styles.logo}>
+                <span style={styles.logoText}>그로스보드</span>
+                <span style={styles.adminBadge}>Admin</span>
+              </div>
+              <nav style={styles.nav}>
+                <button style={{...styles.navButton, ...(currentTab === 'dashboard' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('dashboard')}>대시보드</button>
+                <button style={{...styles.navButton, ...(currentTab === 'members' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('members')}>인원 관리</button>
+                <button style={{...styles.navButton, ...(currentTab === 'growthday' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('growthday')}>그로스데이 관리</button>
+              </nav>
+              <button style={styles.logoutBtn} onClick={() => setIsLoggedIn(false)}>로그아웃</button>
+            </div>
+          </header>
+
+          <main style={styles.main}>
+            {currentTab === 'dashboard' && (
+              <DashboardTab stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} weeks={weeks} growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} onMissingClick={() => setShowMissingModal(true)} />
+            )}
+            {currentTab === 'members' && (
+              <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} weeks={weeks} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} />
+            )}
+            {currentTab === 'growthday' && (
+              <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} />
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    function AdminLoginScreen({ onLogin }) {
+      const [id, setId] = useState('');
+      const [pw, setPw] = useState('');
+      const [error, setError] = useState('');
+
+      const handleLogin = () => {
+        if (id === 'admin' && pw === 'admin') {
+          onLogin();
+        } else {
+          setError('아이디 또는 비밀번호가 올바르지 않습니다');
+        }
+      };
+
+      const handleKeyPress = (e) => {
+        if (e.key === 'Enter') handleLogin();
+      };
+
+      const styles = getStyles();
+
+      return (
+        <div style={styles.loginScreen}>
+          <div style={styles.loginCard}>
+            <div style={styles.loginHeader}>
+              <h1 style={styles.loginTitle}>그로스보드 Admin</h1>
+              <p style={styles.loginSubtitle}>관리자 계정으로 로그인해주세요</p>
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel}>아이디</label>
+              <input type="text" value={id} onChange={(e) => { setId(e.target.value); setError(''); }} onKeyPress={handleKeyPress} style={styles.input} placeholder="아이디를 입력하세요" />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.inputLabel}>비밀번호</label>
+              <input type="password" value={pw} onChange={(e) => { setPw(e.target.value); setError(''); }} onKeyPress={handleKeyPress} style={styles.input} placeholder="비밀번호를 입력하세요" />
+            </div>
+            {error && <div style={styles.errorText}>{error}</div>}
+            <button style={styles.loginBtn} onClick={handleLogin}>로그인</button>
+          </div>
+        </div>
+      );
+    }
+
+    function GrowthdayStartModal({ onClose, onStart }) {
+      const currentYear = new Date().getFullYear();
+      const [year, setYear] = useState(currentYear);
+      const [quarter, setQuarter] = useState(Math.ceil((new Date().getMonth() + 1) / 3));
+      const years = [currentYear, currentYear + 1, currentYear + 2, currentYear + 3];
+      const quarters = [1, 2, 3, 4];
+      const styles = getStyles();
+
+      return (
+        <div style={styles.modalOverlay} onClick={onClose}>
+          <div style={styles.modal} onClick={e => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h3 style={styles.modalTitle}>그로스데이 시작</h3>
+              <button style={styles.modalClose} onClick={onClose}>✕</button>
+            </div>
+            <div style={styles.modalSubtitle}>배점을 진행할 분기를 선택해주세요</div>
+            <div style={styles.selectGroup}>
+              <label style={styles.selectLabel}>연도</label>
+              <div style={styles.selectButtons}>
+                {years.map(y => (
+                  <button key={y} style={{...styles.selectBtn, ...(year === y ? styles.selectBtnActive : {})}} onClick={() => setYear(y)}>{y}년</button>
+                ))}
+              </div>
+            </div>
+            <div style={styles.selectGroup}>
+              <label style={styles.selectLabel}>분기</label>
+              <div style={styles.selectButtons}>
+                {quarters.map(q => (
+                  <button key={q} style={{...styles.selectBtn, ...(quarter === q ? styles.selectBtnActive : {})}} onClick={() => setQuarter(q)}>{q}분기</button>
+                ))}
+              </div>
+            </div>
+            <div style={styles.previewBanner}>📌 <strong>{year}년 {quarter}분기</strong> 그로스데이가 시작됩니다</div>
+            <div style={styles.modalActions}>
+              <button style={styles.cancelBtn} onClick={onClose}>취소</button>
+              <button style={styles.confirmBtn} onClick={() => onStart(year, quarter)}>시작하기</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function DashboardTab({ stats, selectedWeek, setSelectedWeek, weeks, growthdayActive, growthdayQuarter, onMissingClick }) {
+      const styles = getStyles();
+      return (
+        <div style={styles.page}>
+          <div style={styles.pageHeader}>
+            <h1 style={styles.pageTitle}>대시보드</h1>
+            <p style={styles.pageSubtitle}>그로스보드 업로드 현황을 한눈에 확인하세요</p>
+          </div>
+          <div style={styles.weekSelector}>
+            {weeks.map(week => (
+              <button key={week.weekId} style={{...styles.weekButton, ...(selectedWeek === week.weekId ? styles.weekButtonActive : {})}} onClick={() => setSelectedWeek(week.weekId)}>
+                <span style={styles.weekLabel}>{week.label}</span>
+                <span style={styles.weekFriday}>(금 {week.fridayDate})</span>
+              </button>
+            ))}
+          </div>
+          <div style={styles.summaryGrid}>
+            <div style={styles.summaryCard}>
+              <div style={styles.summaryValue}>{stats.totalMembers}</div>
+              <div style={styles.summaryLabel}>총 인원</div>
+            </div>
+            <div style={styles.summaryCard}>
+              <div style={{...styles.summaryValue, color: '#00C471'}}>{stats.currentWeekUploads}</div>
+              <div style={styles.summaryLabel}>업로드 완료</div>
+            </div>
+            <div style={{...styles.summaryCard, cursor: 'pointer'}} onClick={onMissingClick}>
+              <div style={{...styles.summaryValue, color: '#E54545'}}>{stats.totalMembers - stats.currentWeekUploads}</div>
+              <div style={styles.summaryLabel}>미업로드</div>
+              <div style={styles.clickHint}>클릭하여 상세보기 →</div>
+            </div>
+            <div style={styles.summaryCard}>
+              <div style={{...styles.summaryValue, color: growthdayActive ? '#00C471' : '#999', fontSize: '20px'}}>{growthdayActive ? growthdayQuarter : 'OFF'}</div>
+              <div style={styles.summaryLabel}>그로스데이</div>
+            </div>
+          </div>
+          <div style={styles.progressSection}>
+            <div style={styles.progressHeader}><span>전체 진행률</span><span style={styles.progressPercent}>{stats.overallRate}%</span></div>
+            <div style={styles.progressBarBg}><div style={{...styles.progressBarFill, width: `${stats.overallRate}%`}} /></div>
+          </div>
+          <div style={styles.teamSection}>
+            <h3 style={styles.sectionTitle}>부서별 현황</h3>
+            <div style={styles.teamGrid}>
+              {Object.entries(stats.teamStats).map(([team, data]) => (
+                <div key={team} style={styles.teamCard}>
+                  <div style={styles.teamHeader}><div style={{...styles.teamDot, backgroundColor: TEAM_COLORS[team]}} /><span style={styles.teamName}>{team}</span></div>
+                  <div style={styles.teamStatsRow}><span style={styles.teamUploaded}>{data.uploaded}</span><span style={styles.teamTotal}>/ {data.total}</span></div>
+                  <div style={styles.teamProgressBg}><div style={{...styles.teamProgressFill, width: `${data.rate}%`, backgroundColor: TEAM_COLORS[team]}} /></div>
+                  <div style={styles.teamRate}>{data.rate}%</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function MembersTab({ uploadStatus, stats, selectedWeek, setSelectedWeek, weeks, onToggle, selectedTeamFilter, setSelectedTeamFilter }) {
+      const styles = getStyles();
+      return (
+        <div style={styles.page}>
+          <div style={styles.pageHeader}>
+            <h1 style={styles.pageTitle}>인원 관리</h1>
+            <p style={styles.pageSubtitle}>직원들의 업로드 상태를 관리하세요</p>
+          </div>
+          <div style={styles.controlsRow}>
+            <div style={styles.weekSelector}>
+              {weeks.map(week => (
+                <button key={week.weekId} style={{...styles.weekButton, ...(selectedWeek === week.weekId ? styles.weekButtonActive : {})}} onClick={() => setSelectedWeek(week.weekId)}>
+                  <span style={styles.weekLabel}>{week.label}</span>
+                  <span style={styles.weekFriday}>(금 {week.fridayDate})</span>
+                </button>
+              ))}
+            </div>
+            <select value={selectedTeamFilter} onChange={(e) => setSelectedTeamFilter(e.target.value)} style={styles.teamFilter}>
+              <option value="all">전체 부서</option>
+              {Object.keys(REGULAR_TEAMS).map(team => <option key={team} value={team}>{team}</option>)}
+            </select>
+          </div>
+          <div style={styles.memberSection}>
+            {Object.entries(REGULAR_TEAMS).filter(([team]) => selectedTeamFilter === 'all' || team === selectedTeamFilter).map(([team, members]) => (
+              <div key={team} style={styles.memberTeamGroup}>
+                <div style={styles.memberTeamHeader}><div style={{...styles.teamDot, backgroundColor: TEAM_COLORS[team]}} /><span>{team}</span><span style={styles.memberTeamCount}>{stats.teamStats[team]?.uploaded || 0}/{stats.teamStats[team]?.total || 0}</span></div>
+                <div style={styles.memberList}>
+                  {members.map(member => {
+                    const isUploaded = uploadStatus[member]?.weeks?.[selectedWeek];
+                    return (
+                      <div key={member} style={styles.memberItem}>
+                        <span style={styles.memberName}>{member}</span>
+                        <button style={{...styles.memberToggle, backgroundColor: isUploaded ? '#E8F3FF' : '#FEF1F1', color: isUploaded ? '#3182F6' : '#E54545', borderColor: isUploaded ? '#3182F6' : '#E54545'}} onClick={() => onToggle(member, selectedWeek)}>
+                          {isUploaded ? '✓ 완료' : '✕ 미완료'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, onStartClick, onStop }) {
+      const styles = getStyles();
+      return (
+        <div style={styles.page}>
+          <div style={styles.pageHeader}>
+            <h1 style={styles.pageTitle}>그로스데이 관리</h1>
+            <p style={styles.pageSubtitle}>그로스데이 활성화 및 점수 현황을 관리하세요</p>
+          </div>
+          <div style={styles.growthdayControlCard}>
+            <div style={styles.growthdayControlHeader}>
+              <div>
+                <div style={styles.growthdayControlTitle}>그로스데이 배점</div>
+                <div style={styles.growthdayControlDesc}>{growthdayActive ? `${growthdayQuarter} 배점이 진행 중입니다` : '새로운 그로스데이를 시작하세요'}</div>
+              </div>
+              {growthdayActive ? (
+                <button style={styles.stopBtn} onClick={onStop}>종료하기</button>
+              ) : (
+                <button style={styles.startBtn} onClick={onStartClick}>시작하기</button>
+              )}
+            </div>
+            <div style={{...styles.statusBanner, backgroundColor: growthdayActive ? '#E8FFF3' : '#F4F4F4', color: growthdayActive ? '#00C471' : '#666'}}>
+              <div style={{...styles.statusDot, backgroundColor: growthdayActive ? '#00C471' : '#999'}} />
+              {growthdayActive ? `${growthdayQuarter} 그로스데이 배점이 진행 중입니다` : '그로스데이 배점이 비활성화되어 있습니다'}
+            </div>
+          </div>
+          <div style={styles.scoreInfoCard}>⭐ 대표이사님의 배점은 <strong>2배</strong>로 반영됩니다 (최대 200점)</div>
+          {growthdayActive && (
+            <div style={styles.scoresSection}>
+              <h3 style={styles.sectionTitle}>{growthdayQuarter} 점수 현황 <span style={styles.scoreCount}>{growthdayStats.length}명 발표</span></h3>
+              {growthdayStats.length === 0 ? (
+                <div style={styles.emptyState}>아직 배점된 점수가 없습니다</div>
+              ) : (
+                <div style={styles.scoresList}>
+                  {growthdayStats.map((result, index) => (
+                    <div key={result.name} style={styles.scoreCard}>
+                      <div style={styles.scoreRank}>{index < 3 ? <div style={{...styles.rankBadge, backgroundColor: index === 0 ? '#FFD700' : index === 1 ? '#C0C0C0' : '#CD7F32'}}>{index + 1}</div> : <span style={styles.rankNumber}>{index + 1}</span>}</div>
+                      <div style={{...styles.scoreAvatar, backgroundColor: TEAM_COLORS[result.team]}}>{result.name[0]}</div>
+                      <div style={styles.scoreInfo}><div style={styles.scoreName}>{result.name}</div><div style={styles.scoreTeam}>{result.team}</div></div>
+                      <div style={styles.scoreVoters}>{result.voterCount}명 평가 {result.ceoVoted && '⭐'}</div>
+                      <div style={styles.scoreTotalValue}><span style={styles.scoreNumber}>{result.averageScore}</span><span style={styles.scoreUnit}>점</span></div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function getStyles() {
+      return {
+        container: { minHeight: '100vh', backgroundColor: '#F7F8FA' },
+        toast: { position: 'fixed', top: '24px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#FFF', padding: '12px 24px', borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.15)', fontSize: '14px', fontWeight: '500', zIndex: 1000 },
+        loginScreen: { minHeight: '100vh', backgroundColor: '#F7F8FA', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' },
+        loginCard: { backgroundColor: '#FFF', borderRadius: '24px', padding: '40px', width: '100%', maxWidth: '400px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' },
+        loginHeader: { textAlign: 'center', marginBottom: '32px' },
+        loginTitle: { fontSize: '24px', fontWeight: '700', color: '#191F28', marginBottom: '8px' },
+        loginSubtitle: { fontSize: '15px', color: '#666' },
+        inputGroup: { marginBottom: '20px' },
+        inputLabel: { display: 'block', fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '8px' },
+        input: { width: '100%', padding: '14px 16px', border: '1px solid #E5E5E5', borderRadius: '10px', fontSize: '15px', outline: 'none' },
+        errorText: { color: '#E54545', fontSize: '13px', marginBottom: '16px' },
+        loginBtn: { width: '100%', padding: '16px', border: 'none', backgroundColor: '#191F28', borderRadius: '12px', fontSize: '16px', fontWeight: '600', color: '#FFF', cursor: 'pointer' },
+        modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
+        modal: { backgroundColor: '#FFF', borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '480px', maxHeight: '80vh', overflow: 'auto', margin: '20px' },
+        modalHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' },
+        modalTitle: { fontSize: '20px', fontWeight: '700', color: '#191F28', display: 'flex', alignItems: 'center', gap: '10px' },
+        modalCount: { padding: '4px 10px', backgroundColor: '#FEF1F1', color: '#E54545', borderRadius: '6px', fontSize: '14px', fontWeight: '600' },
+        modalSubtitle: { fontSize: '14px', color: '#666', marginBottom: '20px' },
+        modalClose: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '20px', color: '#666' },
+        modalActions: { display: 'flex', gap: '12px', marginTop: '24px' },
+        cancelBtn: { flex: 1, padding: '14px', border: '1px solid #E5E5E5', backgroundColor: '#FFF', borderRadius: '10px', fontSize: '15px', fontWeight: '600', color: '#666', cursor: 'pointer' },
+        confirmBtn: { flex: 1, padding: '14px', border: 'none', backgroundColor: '#3182F6', borderRadius: '10px', fontSize: '15px', fontWeight: '600', color: '#FFF', cursor: 'pointer' },
+        selectGroup: { marginBottom: '20px' },
+        selectLabel: { display: 'block', fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '10px' },
+        selectButtons: { display: 'flex', gap: '8px', flexWrap: 'wrap' },
+        selectBtn: { padding: '12px 20px', border: '1px solid #E5E5E5', backgroundColor: '#FFF', borderRadius: '10px', fontSize: '15px', fontWeight: '500', color: '#666', cursor: 'pointer' },
+        selectBtnActive: { backgroundColor: '#3182F6', borderColor: '#3182F6', color: '#FFF' },
+        previewBanner: { padding: '16px', backgroundColor: '#E8F3FF', borderRadius: '10px', fontSize: '14px', color: '#3182F6', marginTop: '8px' },
+        missingList: { maxHeight: '300px', overflowY: 'auto' },
+        emptyMissing: { textAlign: 'center', padding: '40px 20px', color: '#00C471', fontSize: '15px', fontWeight: '500' },
+        missingTeamGroup: { marginBottom: '16px' },
+        missingTeamHeader: { display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 0', fontSize: '14px', fontWeight: '600', color: '#191F28', borderBottom: '1px solid #F4F4F4' },
+        teamDot: { width: '10px', height: '10px', borderRadius: '50%' },
+        missingTeamCount: { marginLeft: 'auto', color: '#E54545', fontSize: '13px' },
+        missingMembers: { padding: '8px 0' },
+        missingMember: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', fontSize: '14px', color: '#333' },
+        quickCheckBtn: { padding: '6px 12px', border: '1px solid #3182F6', backgroundColor: '#E8F3FF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#3182F6', cursor: 'pointer' },
+        header: { backgroundColor: '#191F28', position: 'sticky', top: 0, zIndex: 100 },
+        headerContent: { maxWidth: '1400px', margin: '0 auto', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+        logo: { display: 'flex', alignItems: 'center', gap: '12px' },
+        logoText: { fontSize: '20px', fontWeight: '700', color: '#FFF' },
+        adminBadge: { padding: '4px 10px', backgroundColor: '#3182F6', borderRadius: '4px', fontSize: '12px', fontWeight: '600', color: '#FFF' },
+        nav: { display: 'flex', gap: '8px' },
+        navButton: { padding: '10px 20px', border: 'none', backgroundColor: 'transparent', borderRadius: '8px', fontSize: '14px', fontWeight: '500', color: '#999', cursor: 'pointer' },
+        navButtonActive: { backgroundColor: 'rgba(49,130,246,0.2)', color: '#3182F6' },
+        logoutBtn: { padding: '10px 16px', border: '1px solid #444', backgroundColor: 'transparent', borderRadius: '8px', fontSize: '13px', fontWeight: '500', color: '#999', cursor: 'pointer' },
+        main: { maxWidth: '1400px', margin: '0 auto', padding: '32px 24px' },
+        page: {},
+        pageHeader: { marginBottom: '28px' },
+        pageTitle: { fontSize: '28px', fontWeight: '700', color: '#191F28', marginBottom: '8px' },
+        pageSubtitle: { fontSize: '16px', color: '#666' },
+        weekSelector: { display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' },
+        weekButton: { padding: '10px 16px', border: '1px solid #E5E5E5', backgroundColor: '#FFF', borderRadius: '10px', fontSize: '14px', fontWeight: '500', color: '#666', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' },
+        weekButtonActive: { backgroundColor: '#3182F6', borderColor: '#3182F6', color: '#FFF' },
+        weekLabel: { fontSize: '14px', fontWeight: '600' },
+        weekFriday: { fontSize: '11px', opacity: 0.8 },
+        summaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' },
+        summaryCard: { backgroundColor: '#FFF', borderRadius: '16px', padding: '24px', textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
+        summaryValue: { fontSize: '32px', fontWeight: '700', color: '#191F28', marginBottom: '4px' },
+        summaryLabel: { fontSize: '14px', color: '#666' },
+        clickHint: { fontSize: '12px', color: '#3182F6', marginTop: '8px' },
+        progressSection: { backgroundColor: '#FFF', borderRadius: '16px', padding: '24px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
+        progressHeader: { display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px', fontWeight: '500' },
+        progressPercent: { color: '#3182F6', fontWeight: '700' },
+        progressBarBg: { height: '12px', backgroundColor: '#E5E5E5', borderRadius: '6px', overflow: 'hidden' },
+        progressBarFill: { height: '100%', backgroundColor: '#3182F6', borderRadius: '6px', transition: 'width 0.5s ease' },
+        teamSection: { marginBottom: '24px' },
+        sectionTitle: { fontSize: '18px', fontWeight: '600', color: '#191F28', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '12px' },
+        teamGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '16px' },
+        teamCard: { backgroundColor: '#FFF', borderRadius: '12px', padding: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
+        teamHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' },
+        teamName: { fontSize: '14px', fontWeight: '600', color: '#191F28' },
+        teamStatsRow: { marginBottom: '8px' },
+        teamUploaded: { fontSize: '24px', fontWeight: '700', color: '#191F28' },
+        teamTotal: { fontSize: '16px', color: '#666' },
+        teamProgressBg: { height: '6px', backgroundColor: '#E5E5E5', borderRadius: '3px', overflow: 'hidden', marginBottom: '8px' },
+        teamProgressFill: { height: '100%', borderRadius: '3px' },
+        teamRate: { fontSize: '13px', fontWeight: '600', color: '#666', textAlign: 'right' },
+        controlsRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' },
+        teamFilter: { padding: '10px 16px', border: '1px solid #E5E5E5', borderRadius: '8px', fontSize: '14px', backgroundColor: '#FFF', cursor: 'pointer' },
+        memberSection: {},
+        memberTeamGroup: { backgroundColor: '#FFF', borderRadius: '12px', marginBottom: '12px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
+        memberTeamHeader: { display: 'flex', alignItems: 'center', gap: '8px', padding: '16px 20px', backgroundColor: '#F7F8FA', fontSize: '14px', fontWeight: '600', color: '#191F28' },
+        memberTeamCount: { marginLeft: 'auto', color: '#666', fontWeight: '500' },
+        memberList: { padding: '12px 20px' },
+        memberItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #F4F4F4' },
+        memberName: { fontSize: '14px', color: '#333', fontWeight: '500' },
+        memberToggle: { padding: '6px 12px', border: '1px solid', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
+        growthdayControlCard: { backgroundColor: '#FFF', borderRadius: '16px', padding: '28px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', marginBottom: '16px' },
+        growthdayControlHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
+        growthdayControlTitle: { fontSize: '18px', fontWeight: '600', color: '#191F28', marginBottom: '4px' },
+        growthdayControlDesc: { fontSize: '14px', color: '#666' },
+        startBtn: { padding: '12px 24px', border: 'none', backgroundColor: '#3182F6', borderRadius: '10px', fontSize: '15px', fontWeight: '600', color: '#FFF', cursor: 'pointer' },
+        stopBtn: { padding: '12px 24px', border: 'none', backgroundColor: '#E54545', borderRadius: '10px', fontSize: '15px', fontWeight: '600', color: '#FFF', cursor: 'pointer' },
+        statusBanner: { display: 'flex', alignItems: 'center', gap: '10px', padding: '16px 20px', borderRadius: '12px', fontSize: '14px', fontWeight: '500' },
+        statusDot: { width: '8px', height: '8px', borderRadius: '50%' },
+        scoreInfoCard: { padding: '16px 20px', backgroundColor: '#FFF8DC', borderRadius: '12px', marginBottom: '24px', fontSize: '14px', color: '#8B6914' },
+        scoresSection: { marginTop: '24px' },
+        scoreCount: { fontSize: '14px', fontWeight: '500', color: '#666' },
+        emptyState: { backgroundColor: '#FFF', borderRadius: '16px', padding: '64px', textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', color: '#999' },
+        scoresList: { display: 'flex', flexDirection: 'column', gap: '12px' },
+        scoreCard: { display: 'flex', alignItems: 'center', gap: '16px', padding: '20px', backgroundColor: '#FFF', borderRadius: '12px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
+        scoreRank: { width: '32px', textAlign: 'center' },
+        rankBadge: { width: '28px', height: '28px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '14px', fontWeight: '700', color: '#FFF' },
+        rankNumber: { fontSize: '16px', fontWeight: '600', color: '#999' },
+        scoreAvatar: { width: '44px', height: '44px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', fontSize: '16px', fontWeight: '600' },
+        scoreInfo: { flex: 1 },
+        scoreName: { fontSize: '16px', fontWeight: '600', color: '#191F28' },
+        scoreTeam: { fontSize: '13px', color: '#666' },
+        scoreVoters: { padding: '6px 12px', backgroundColor: '#F7F8FA', borderRadius: '6px', fontSize: '13px', color: '#666' },
+        scoreTotalValue: { textAlign: 'right', minWidth: '80px' },
+        scoreNumber: { fontSize: '24px', fontWeight: '700', color: '#3182F6' },
+        scoreUnit: { fontSize: '14px', color: '#666', marginLeft: '2px' },
+      };
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
