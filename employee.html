@@ -7,6 +7,8 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -29,23 +31,49 @@
   <script type="text/babel">
     const { useState, useEffect } = React;
 
+    // Firebase 설정
+    const firebaseConfig = {
+      apiKey: "AIzaSyDIlXh7hkdymo_3XNnTHvDllrBO5jnJwsI",
+      authDomain: "growthboard-netform.firebaseapp.com",
+      databaseURL: "https://growthboard-netform-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "growthboard-netform",
+      storageBucket: "growthboard-netform.firebasestorage.app",
+      messagingSenderId: "489120165966",
+      appId: "1:489120165966:web:914e01c04b3b900ff1131f"
+    };
+
+    // Firebase 초기화
+    let db = null;
+    try {
+      firebase.initializeApp(firebaseConfig);
+      db = firebase.database();
+    } catch (e) {
+      console.log('Firebase 설정이 필요합니다.');
+    }
+
     const TEAMS_DATA = {
       "대표이사실": ["이승우"],
-      "경영관리팀": ["신나영", "주유진", "이재훈"],
-      "서비스운영1팀": ["한준엽", "조재연", "정정훈", "한지혜"],
-      "서비스운영2팀": ["권정아", "김유림", "김수진"],
-      "브랜드마케팅팀": ["권혜영", "김범석", "함지민", "김소라"],
-      "미디어커머스": ["방현수", "김소연", "김송희", "이채은", "김채원", "쩐티리", "이란"],
+      "경영관리팀": ["신나영", "주유진", "김유림"],
+      "그로스팀": ["이재훈"],
+      "서비스운영1팀": ["한준엽", "조재연", "정정훈", "김성민", "한지혜"],
+      "서비스운영2팀": ["권정아", "김수진"],
+      "서비스운영3팀": ["주현진", "송보람"],
       "기술연구소": ["신명희", "심혜진", "김소정"],
-      "설계/적산": ["신수진", "김영성"],
-      "아파트스퀘어": ["한인규"],
-      "석민이앤씨": ["주현진", "송보람", "이필선", "김성민"]
+      "아파트스퀘어팀": ["한인규"],
+      "적산팀": ["김영성", "신수진"],
+      "브랜드마케팅팀": ["권혜영", "함지민", "김범석", "김소라"],
+      "브랜드커머스팀": ["이란"],
+      "미디어커머스팀": ["방현수", "김소연", "남윤정"],
+      "해외사업팀": ["김채원", "쩐티리"],
+      "모여라딜팀": ["김송희", "이채은"]
     };
 
     const TEAM_COLORS = {
-      "대표이사실": "#191F28", "경영관리팀": "#3182F6", "서비스운영1팀": "#00C471",
-      "서비스운영2팀": "#9B59B6", "브랜드마케팅팀": "#FF6B6B", "미디어커머스": "#F39C12",
-      "기술연구소": "#1ABC9C", "설계/적산": "#E74C3C", "아파트스퀘어": "#3498DB", "석민이앤씨": "#8E44AD"
+      "대표이사실": "#191F28", "경영관리팀": "#3182F6", "그로스팀": "#00C471",
+      "서비스운영1팀": "#9B59B6", "서비스운영2팀": "#FF6B6B", "서비스운영3팀": "#E67E22",
+      "기술연구소": "#1ABC9C", "아파트스퀘어팀": "#3498DB", "적산팀": "#E74C3C",
+      "브랜드마케팅팀": "#F39C12", "브랜드커머스팀": "#8E44AD", "미디어커머스팀": "#16A085",
+      "해외사업팀": "#2980B9", "모여라딜팀": "#C0392B"
     };
 
     const REGULAR_TEAMS = Object.fromEntries(Object.entries(TEAMS_DATA).filter(([team]) => team !== "대표이사실"));
@@ -59,34 +87,34 @@
       { id: 'presentation', name: '발표력', maxScore: 15 },
     ];
 
+    // 월요일~일요일 기준 주 계산
     const getWeekInfo = (date = new Date()) => {
       const d = new Date(date);
       const dayOfWeek = d.getDay();
-      const friday = new Date(d);
-      const daysToFriday = (5 - dayOfWeek + 7) % 7;
-      const daysSinceFriday = (dayOfWeek + 2) % 7;
+      // 월요일을 주의 시작으로 (일요일=0을 6으로 변환)
+      const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
       
-      if (dayOfWeek === 0 || dayOfWeek === 1 || dayOfWeek === 6) {
-        friday.setDate(d.getDate() - daysSinceFriday);
-      } else {
-        friday.setDate(d.getDate() + daysToFriday);
-      }
+      const monday = new Date(d);
+      monday.setDate(d.getDate() - daysSinceMonday);
       
-      const tuesday = new Date(friday); tuesday.setDate(friday.getDate() - 3);
-      const monday = new Date(friday); monday.setDate(friday.getDate() + 3);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
       
-      const year = friday.getFullYear();
-      const month = friday.getMonth() + 1;
-      const day = friday.getDate();
+      const year = monday.getFullYear();
+      const month = monday.getMonth() + 1;
+      const day = monday.getDate();
       const weekId = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       
-      const tuesdayMonth = tuesday.getMonth() + 1;
-      const tuesdayDay = tuesday.getDate();
       const mondayMonth = monday.getMonth() + 1;
       const mondayDay = monday.getDate();
+      const sundayMonth = sunday.getMonth() + 1;
+      const sundayDay = sunday.getDate();
       
-      let label = tuesdayMonth === mondayMonth ? `${tuesdayMonth}/${tuesdayDay}~${mondayDay}` : `${tuesdayMonth}/${tuesdayDay}~${mondayMonth}/${mondayDay}`;
-      return { weekId, fridayDate: `${month}/${day}`, label };
+      let label = mondayMonth === sundayMonth 
+        ? `${mondayMonth}/${mondayDay}~${sundayDay}` 
+        : `${mondayMonth}/${mondayDay}~${sundayMonth}/${sundayDay}`;
+      
+      return { weekId, label };
     };
 
     const generateRecentWeeks = (count = 5) => {
@@ -100,24 +128,19 @@
       return weeks.slice(-count);
     };
 
-    const generateInitialUploadStatus = () => {
-      const status = {}; const weeks = generateRecentWeeks(5);
+    // 빈 업로드 상태 생성 (모두 미체크)
+    const generateEmptyUploadStatus = () => {
+      const status = {};
       Object.entries(REGULAR_TEAMS).forEach(([team, members]) => {
         members.forEach(member => {
-          const memberWeeks = {};
-          weeks.forEach((week, idx) => { memberWeeks[week.weekId] = Math.random() > (idx === weeks.length - 1 ? 0.4 : 0.25); });
-          status[member] = { team, weeks: memberWeeks };
+          status[member] = { team, weeks: {} };
         });
       });
       return status;
     };
 
     const STORAGE_KEYS = {
-      UPLOAD_STATUS: 'growthboard_upload_v4',
-      SCORES: 'growthboard_scores_v4',
-      GROWTHDAY_ACTIVE: 'growthboard_growthday_active_v4',
-      GROWTHDAY_QUARTER: 'growthboard_growthday_quarter_v4',
-      LOGGED_IN_USER: 'growthboard_logged_in_user_v4'
+      LOGGED_IN_USER: 'growthboard_logged_in_user_v5'
     };
 
     function App() {
@@ -126,67 +149,111 @@
         return saved ? JSON.parse(saved) : null;
       });
       const [currentPage, setCurrentPage] = useState('upload');
-      const [uploadStatus, setUploadStatus] = useState(() => {
-        const saved = localStorage.getItem(STORAGE_KEYS.UPLOAD_STATUS);
-        return saved ? JSON.parse(saved) : generateInitialUploadStatus();
-      });
-      const [scores, setScores] = useState(() => {
-        const saved = localStorage.getItem(STORAGE_KEYS.SCORES);
-        return saved ? JSON.parse(saved) : {};
-      });
-      const [growthdayActive, setGrowthdayActive] = useState(() => {
-        const saved = localStorage.getItem(STORAGE_KEYS.GROWTHDAY_ACTIVE);
-        return saved ? JSON.parse(saved) : false;
-      });
-      const [growthdayQuarter, setGrowthdayQuarter] = useState(() => localStorage.getItem(STORAGE_KEYS.GROWTHDAY_QUARTER) || '');
+      const [uploadStatus, setUploadStatus] = useState(generateEmptyUploadStatus());
+      const [scores, setScores] = useState({});
+      const [growthdayActive, setGrowthdayActive] = useState(false);
+      const [growthdayQuarter, setGrowthdayQuarter] = useState('');
+      const [isLoading, setIsLoading] = useState(true);
       
       const weeks = generateRecentWeeks(5);
       const [selectedWeek, setSelectedWeek] = useState(weeks[weeks.length - 1]?.weekId || '');
       const [toast, setToast] = useState(null);
       const isCEO = loggedInUser?.team === "대표이사실";
 
-      useEffect(() => { localStorage.setItem(STORAGE_KEYS.UPLOAD_STATUS, JSON.stringify(uploadStatus)); }, [uploadStatus]);
-      useEffect(() => { localStorage.setItem(STORAGE_KEYS.SCORES, JSON.stringify(scores)); }, [scores]);
+      // Firebase 실시간 리스너
+      useEffect(() => {
+        if (!db) {
+          setIsLoading(false);
+          return;
+        }
+
+        // 업로드 상태 리스너
+        const uploadRef = db.ref('uploadStatus');
+        uploadRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            setUploadStatus(prev => {
+              const merged = generateEmptyUploadStatus();
+              Object.keys(data).forEach(member => {
+                if (merged[member]) {
+                  merged[member].weeks = data[member].weeks || {};
+                }
+              });
+              return merged;
+            });
+          }
+          setIsLoading(false);
+        });
+
+        // 점수 리스너
+        const scoresRef = db.ref('scores');
+        scoresRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) setScores(data);
+        });
+
+        // 그로스데이 상태 리스너
+        const growthdayRef = db.ref('growthday');
+        growthdayRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            setGrowthdayActive(data.active || false);
+            setGrowthdayQuarter(data.quarter || '');
+          }
+        });
+
+        return () => {
+          uploadRef.off();
+          scoresRef.off();
+          growthdayRef.off();
+        };
+      }, []);
+
       useEffect(() => {
         if (loggedInUser) localStorage.setItem(STORAGE_KEYS.LOGGED_IN_USER, JSON.stringify(loggedInUser));
         else localStorage.removeItem(STORAGE_KEYS.LOGGED_IN_USER);
       }, [loggedInUser]);
-
-      useEffect(() => {
-        const handleStorageChange = (e) => {
-          if (e.key === STORAGE_KEYS.GROWTHDAY_ACTIVE) setGrowthdayActive(JSON.parse(e.newValue));
-          if (e.key === STORAGE_KEYS.GROWTHDAY_QUARTER) setGrowthdayQuarter(e.newValue || '');
-          if (e.key === STORAGE_KEYS.UPLOAD_STATUS) setUploadStatus(JSON.parse(e.newValue));
-        };
-        window.addEventListener('storage', handleStorageChange);
-        return () => window.removeEventListener('storage', handleStorageChange);
-      }, []);
 
       const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 2500); };
       const handleLogin = (team, name) => { setLoggedInUser({ team, name }); showToast(`${name}님 환영합니다!`); };
       const handleLogout = () => { setLoggedInUser(null); setCurrentPage('upload'); showToast('로그아웃되었습니다'); };
 
       const handleUploadCheck = (member, weekId) => {
-        setUploadStatus(prev => ({
-          ...prev,
-          [member]: { ...prev[member], weeks: { ...prev[member]?.weeks, [weekId]: !prev[member]?.weeks?.[weekId] } }
-        }));
+        if (!db) {
+          showToast('Firebase 연결이 필요합니다');
+          return;
+        }
+        
+        const currentStatus = uploadStatus[member]?.weeks?.[weekId] || false;
+        const newStatus = !currentStatus;
+        
+        db.ref(`uploadStatus/${member}/weeks/${weekId}`).set(newStatus);
         showToast('업로드 상태가 변경되었습니다');
       };
 
       const handleScoreSubmit = (presenter, criteriaScores, isEdit = false) => {
-        setScores(prev => ({
-          ...prev,
-          [growthdayQuarter]: {
-            ...prev[growthdayQuarter],
-            [presenter]: {
-              ...prev[growthdayQuarter]?.[presenter],
-              [loggedInUser.name]: { scores: criteriaScores, isCEO }
-            }
-          }
-        }));
+        if (!db) {
+          showToast('Firebase 연결이 필요합니다');
+          return;
+        }
+        
+        db.ref(`scores/${growthdayQuarter}/${presenter}/${loggedInUser.name}`).set({
+          scores: criteriaScores,
+          isCEO
+        });
         showToast(isEdit ? `${presenter}님 점수가 수정되었습니다` : `${presenter}님에게 점수를 부여했습니다`);
       };
+
+      if (isLoading) {
+        return (
+          <div style={{minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#F7F8FA'}}>
+            <div style={{textAlign: 'center'}}>
+              <div style={{fontSize: '24px', marginBottom: '12px'}}>⏳</div>
+              <div style={{color: '#666'}}>로딩 중...</div>
+            </div>
+          </div>
+        );
+      }
 
       if (!loggedInUser) return <LoginScreen onLogin={handleLogin} />;
 
@@ -212,7 +279,6 @@
             </div>
           </header>
 
-          {/* 모바일 하단 네비게이션 */}
           <nav style={styles.bottomNav}>
             {!isCEO && (
               <button 
@@ -374,7 +440,6 @@
                 onClick={() => setSelectedWeek(week.weekId)}
               >
                 <span style={styles.weekLabel}>{week.label}</span>
-                <span style={styles.weekFriday}>금 {week.fridayDate}</span>
               </button>
             ))}
           </div>
@@ -428,7 +493,6 @@
                   <div key={week.weekId} style={styles.historyItem}>
                     <div style={styles.historyInfo}>
                       <span style={styles.historyWeek}>{week.label}</span>
-                      <span style={styles.historyFriday}>금 {week.fridayDate}</span>
                     </div>
                     <span style={{...styles.historyBadge, backgroundColor: checked ? '#E8F3FF' : '#FEF1F1', color: checked ? '#3182F6' : '#E54545'}}>
                       {checked ? '완료' : '미완료'}
@@ -501,7 +565,6 @@
 
       const handleScoreChange = (criteriaId, value, maxScore) => {
         let numValue = value === '' ? 0 : parseInt(value);
-        // 모든 사람 동일하게 0~maxScore 범위로 입력
         numValue = Math.max(0, Math.min(maxScore, numValue));
         setCriteriaScores(prev => ({...prev, [criteriaId]: numValue}));
       };
@@ -525,7 +588,6 @@
             </div>
           </div>
 
-          {/* 발표자 선택 */}
           {!selectedPresenter && (
             <>
               <input
@@ -563,7 +625,6 @@
             </>
           )}
 
-          {/* 배점 카드 */}
           {selectedPresenter && (
             <div style={styles.scoringCard}>
               <div style={styles.scoringHeader}>
@@ -632,7 +693,6 @@
             </div>
           )}
 
-          {/* 내가 평가한 발표자 */}
           {!selectedPresenter && scoredPresenters.length > 0 && (
             <div style={styles.myScoresSection}>
               <h3 style={styles.sectionTitle}>내가 평가한 발표자 ({scoredPresenters.length}명)</h3>
@@ -663,7 +723,6 @@
       container: { minHeight: '100vh', backgroundColor: '#F7F8FA', paddingBottom: '80px' },
       toast: { position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#191F28', color: '#FFF', padding: '12px 20px', borderRadius: '10px', fontSize: '14px', fontWeight: '500', zIndex: 1000, animation: 'slideUp 0.3s ease' },
       
-      // Header
       header: { backgroundColor: '#FFF', borderBottom: '1px solid #F0F0F0', position: 'sticky', top: 0, zIndex: 100 },
       headerContent: { maxWidth: '600px', margin: '0 auto', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
       logo: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' },
@@ -672,20 +731,17 @@
       userAvatar: { width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', fontSize: '13px', fontWeight: '600' },
       logoutBtn: { padding: '6px 12px', border: '1px solid #E5E5E5', backgroundColor: '#FFF', borderRadius: '6px', fontSize: '12px', color: '#666' },
       
-      // Bottom Navigation
       bottomNav: { position: 'fixed', bottom: 0, left: 0, right: 0, backgroundColor: '#FFF', borderTop: '1px solid #F0F0F0', display: 'flex', justifyContent: 'center', gap: '8px', padding: '8px 20px', paddingBottom: 'calc(8px + env(safe-area-inset-bottom))', zIndex: 100 },
       bottomNavBtn: { flex: 1, maxWidth: '160px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', padding: '8px', border: 'none', backgroundColor: 'transparent', borderRadius: '10px', fontSize: '11px', fontWeight: '500', color: '#999' },
       bottomNavBtnActive: { backgroundColor: '#E8F3FF', color: '#3182F6' },
       liveIndicatorWrapper: { position: 'relative' },
       liveIndicator: { position: 'absolute', top: '-2px', right: '-2px', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#00C471', animation: 'pulse 1.5s infinite' },
       
-      // Main
       main: { maxWidth: '600px', margin: '0 auto', padding: '20px' },
       page: { animation: 'fadeIn 0.3s ease' },
       pageHeader: { marginBottom: '20px' },
       pageTitle: { fontSize: '24px', fontWeight: '700', color: '#191F28', marginBottom: '8px' },
       
-      // Login
       loginScreen: { minHeight: '100vh', backgroundColor: '#F7F8FA', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' },
       loginCard: { backgroundColor: '#FFF', borderRadius: '20px', padding: '28px', width: '100%', maxWidth: '400px', boxShadow: '0 4px 20px rgba(0,0,0,0.08)' },
       loginHeader: { textAlign: 'center', marginBottom: '24px' },
@@ -705,7 +761,6 @@
       ceoBadge: { padding: '4px 8px', backgroundColor: '#191F28', borderRadius: '4px', fontSize: '11px', fontWeight: '600', color: '#FFF' },
       backBtn: { display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '8px 12px', border: 'none', backgroundColor: '#F4F4F4', borderRadius: '8px', fontSize: '13px', fontWeight: '500', color: '#666', marginBottom: '12px' },
       
-      // Upload Check
       weekSelector: { display: 'flex', gap: '8px', marginBottom: '20px', overflowX: 'auto', paddingBottom: '4px' },
       weekBtn: { padding: '10px 14px', border: '1px solid #E5E5E5', backgroundColor: '#FFF', borderRadius: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', flexShrink: 0 },
       weekBtnActive: { backgroundColor: '#3182F6', borderColor: '#3182F6', color: '#FFF' },
@@ -731,7 +786,6 @@
       historyFriday: { fontSize: '12px', color: '#999' },
       historyBadge: { padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: '600' },
       
-      // Growth Day
       quarterInfo: { display: 'flex', alignItems: 'center', gap: '8px' },
       quarterBadge: { padding: '6px 12px', backgroundColor: '#3182F6', color: '#FFF', borderRadius: '6px', fontSize: '13px', fontWeight: '600' },
       ceoBadgeScore: { padding: '6px 10px', backgroundColor: '#FFF8DC', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#8B6914' },
@@ -744,7 +798,6 @@
       presenterName: { flex: 1, fontSize: '15px', fontWeight: '500', color: '#191F28', textAlign: 'left' },
       votedBadge: { padding: '4px 10px', backgroundColor: '#E8FFF3', borderRadius: '4px', fontSize: '12px', fontWeight: '600', color: '#00C471' },
       
-      // Scoring Card
       scoringCard: { backgroundColor: '#FFF', borderRadius: '16px', padding: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', animation: 'slideUp 0.3s ease' },
       scoringHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #F4F4F4' },
       scoringPresenter: { display: 'flex', alignItems: 'center', gap: '12px' },
@@ -772,7 +825,6 @@
       totalMax: { fontSize: '14px', fontWeight: '500', color: '#999' },
       submitBtn: { width: '100%', padding: '16px', border: 'none', backgroundColor: '#3182F6', borderRadius: '12px', fontSize: '16px', fontWeight: '600', color: '#FFF' },
       
-      // My Scores
       myScoresSection: { marginTop: '24px' },
       myScoresList: { display: 'flex', flexDirection: 'column', gap: '8px' },
       myScoreItem: { width: '100%', display: 'flex', alignItems: 'center', gap: '12px', padding: '14px', border: 'none', backgroundColor: '#FFF', borderRadius: '12px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' },
@@ -783,7 +835,6 @@
       myScoreValue: { fontSize: '18px', fontWeight: '700', color: '#3182F6' },
       editIcon: { fontSize: '14px', color: '#999' },
       
-      // CEO Welcome
       ceoWelcome: { textAlign: 'center', padding: '40px 20px' },
       ceoIcon: { fontSize: '48px', marginBottom: '16px' },
       ceoTitle: { fontSize: '22px', fontWeight: '700', color: '#191F28', marginBottom: '8px' },
