@@ -10,6 +10,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -41,14 +42,14 @@
     const TEAMS_DATA = {
       "대표이사실": ["이승우"],
       "경영관리팀": ["신나영", "주유진", "김유림"],
-      "그로스팀": ["이재훈", "김범석"],
+      "그로스팀": ["이재훈"],
       "서비스운영1팀": ["한준엽", "조재연", "정정훈", "김성민", "한지혜"],
       "서비스운영2팀": ["권정아", "김수진"],
       "서비스운영3팀": ["주현진", "송보람"],
       "기술연구소": ["신명희", "심혜진", "김소정"],
       "아파트스퀘어팀": ["한인규"],
       "적산팀": ["김영성", "신수진"],
-      "브랜드마케팅팀": ["권혜영", "함지민", "김소라"],
+      "브랜드마케팅팀": ["권혜영", "함지민", "김범석", "김소라"],
       "브랜드커머스팀": ["이란"],
       "미디어커머스팀": ["방현수", "김소연", "남윤정"],
       "해외사업팀": ["김채원", "쩐티리"],
@@ -430,94 +431,98 @@
 
     function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, onStartClick, onStop }) {
       const [selectedPresenter, setSelectedPresenter] = useState(null);
+      const [isExporting, setIsExporting] = useState(false);
       const selectedData = growthdayStats.find(r => r.name === selectedPresenter);
 
-      const exportToPDF = () => {
-        const { jsPDF } = window.jspdf;
-        const doc = new jsPDF('p', 'mm', 'a4');
-        doc.setFont('helvetica');
-        const pageWidth = doc.internal.pageSize.getWidth();
-        const margin = 20;
-        let yPos = 20;
-
-        doc.setFontSize(20);
-        doc.setTextColor(25, 31, 40);
-        doc.text('Growth Day Score Report', pageWidth / 2, yPos, { align: 'center' });
-        yPos += 10;
-
-        doc.setFontSize(14);
-        doc.setTextColor(49, 130, 246);
-        doc.text(growthdayQuarter, pageWidth / 2, yPos, { align: 'center' });
-        yPos += 5;
-
-        doc.setFontSize(10);
-        doc.setTextColor(102, 102, 102);
+      const exportToPDF = async () => {
+        setIsExporting(true);
+        
+        // PDF용 임시 DOM 요소 생성
+        const pdfContent = document.createElement('div');
+        pdfContent.style.cssText = 'position: absolute; left: -9999px; top: 0; width: 800px; padding: 40px; background: white; font-family: Pretendard, sans-serif;';
+        
         const today = new Date();
-        doc.text('Generated: ' + today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0'), pageWidth / 2, yPos, { align: 'center' });
-        yPos += 15;
-
-        doc.setDrawColor(229, 229, 229);
-        doc.line(margin, yPos, pageWidth - margin, yPos);
-        yPos += 10;
-
-        doc.setFontSize(12);
-        doc.setTextColor(25, 31, 40);
-        doc.text('Total Presenters: ' + growthdayStats.length, margin, yPos);
-        yPos += 10;
-
-        doc.setFillColor(247, 248, 250);
-        doc.rect(margin, yPos, pageWidth - margin * 2, 10, 'F');
-        doc.setFontSize(10);
-        doc.setTextColor(102, 102, 102);
-        doc.text('Rank', margin + 5, yPos + 7);
-        doc.text('Name', margin + 25, yPos + 7);
-        doc.text('Team', margin + 60, yPos + 7);
-        doc.text('Voters', margin + 110, yPos + 7);
-        doc.text('Avg Score', margin + 140, yPos + 7);
-        yPos += 15;
-
-        doc.setTextColor(25, 31, 40);
-        growthdayStats.forEach((result, index) => {
-          if (yPos > 270) { doc.addPage(); yPos = 20; }
-          if (index < 3) {
-            const colors = [[255, 215, 0], [192, 192, 192], [205, 127, 50]];
-            doc.setFillColor(...colors[index]);
-            doc.circle(margin + 8, yPos - 2, 4, 'F');
-            doc.setTextColor(255, 255, 255);
-            doc.text(String(index + 1), margin + 6, yPos);
-            doc.setTextColor(25, 31, 40);
-          } else {
-            doc.text(String(index + 1), margin + 5, yPos);
+        const dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+        
+        pdfContent.innerHTML = `
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="font-size: 28px; font-weight: 700; color: #191F28; margin-bottom: 8px;">그로스데이 점수 리포트</h1>
+            <div style="font-size: 18px; color: #3182F6; font-weight: 600; margin-bottom: 4px;">${growthdayQuarter}</div>
+            <div style="font-size: 12px; color: #999;">생성일: ${dateStr}</div>
+          </div>
+          <div style="border-top: 2px solid #E5E5E5; padding-top: 20px; margin-bottom: 20px;">
+            <div style="font-size: 14px; color: #333; margin-bottom: 15px;">총 발표자: <strong>${growthdayStats.length}명</strong></div>
+          </div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+            <thead>
+              <tr style="background: #F7F8FA;">
+                <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 60px;">순위</th>
+                <th style="padding: 12px 8px; text-align: left; color: #666; font-weight: 600;">이름</th>
+                <th style="padding: 12px 8px; text-align: left; color: #666; font-weight: 600;">소속</th>
+                <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 80px;">평가인원</th>
+                <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 80px;">평균점수</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${growthdayStats.map((result, index) => {
+                const rankStyle = index === 0 ? 'background: #FFD700; color: white;' 
+                  : index === 1 ? 'background: #C0C0C0; color: white;' 
+                  : index === 2 ? 'background: #CD7F32; color: white;' : 'background: #F4F4F4; color: #666;';
+                return `
+                  <tr style="border-bottom: 1px solid #F4F4F4;">
+                    <td style="padding: 14px 8px; text-align: center;">
+                      <span style="display: inline-block; width: 28px; height: 28px; line-height: 28px; border-radius: 50%; font-weight: 700; font-size: 12px; ${rankStyle}">${index + 1}</span>
+                    </td>
+                    <td style="padding: 14px 8px; font-weight: 600; color: #191F28;">${result.name}</td>
+                    <td style="padding: 14px 8px; color: #666;">${result.team}</td>
+                    <td style="padding: 14px 8px; text-align: center; color: #666;">${result.voterCount}명 ${result.ceoVoted ? '⭐' : ''}</td>
+                    <td style="padding: 14px 8px; text-align: center; font-weight: 700; color: #3182F6; font-size: 16px;">${result.averageScore}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+          <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #E5E5E5;">
+            <div style="font-size: 11px; color: #999;">⭐ 대표이사 평가 (x2 배점 적용)</div>
+            <div style="font-size: 11px; color: #999; margin-top: 4px;">Netform Growth Board</div>
+          </div>
+        `;
+        
+        document.body.appendChild(pdfContent);
+        
+        try {
+          const canvas = await html2canvas(pdfContent, { scale: 2, useCORS: true });
+          const imgData = canvas.toDataURL('image/png');
+          
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF('p', 'mm', 'a4');
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = pdf.internal.pageSize.getHeight();
+          const imgWidth = pdfWidth - 20;
+          const imgHeight = (canvas.height * imgWidth) / canvas.width;
+          
+          let heightLeft = imgHeight;
+          let position = 10;
+          
+          pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+          heightLeft -= (pdfHeight - 20);
+          
+          while (heightLeft > 0) {
+            position = heightLeft - imgHeight + 10;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 10, position, imgWidth, imgHeight);
+            heightLeft -= (pdfHeight - 20);
           }
-          doc.text(result.name, margin + 25, yPos);
-          doc.setFontSize(9);
-          doc.setTextColor(102, 102, 102);
-          doc.text(result.team.substring(0, 12), margin + 60, yPos);
-          doc.setFontSize(10);
-          doc.setTextColor(25, 31, 40);
-          doc.text(result.voterCount + (result.ceoVoted ? ' *' : ''), margin + 110, yPos);
-          doc.setTextColor(49, 130, 246);
-          doc.text(result.averageScore, margin + 140, yPos);
-          doc.setTextColor(25, 31, 40);
-          yPos += 8;
-        });
-
-        yPos += 10;
-        doc.setFontSize(9);
-        doc.setTextColor(102, 102, 102);
-        doc.text('* CEO voted (x2 applied)', margin, yPos);
-
-        const pageCount = doc.internal.getNumberOfPages();
-        for (let i = 1; i <= pageCount; i++) {
-          doc.setPage(i);
-          doc.setFontSize(8);
-          doc.setTextColor(153, 153, 153);
-          doc.text('Page ' + i + ' of ' + pageCount, pageWidth / 2, 290, { align: 'center' });
-          doc.text('Netform Growth Board', pageWidth - margin, 290, { align: 'right' });
+          
+          const fileName = '그로스데이_' + growthdayQuarter.replace(/\s/g, '_') + '_' + dateStr + '.pdf';
+          pdf.save(fileName);
+        } catch (err) {
+          console.error('PDF 생성 오류:', err);
+          alert('PDF 생성 중 오류가 발생했습니다.');
+        } finally {
+          document.body.removeChild(pdfContent);
+          setIsExporting(false);
         }
-
-        const fileName = 'GrowthDay_' + growthdayQuarter.replace(/\s/g, '_') + '_' + today.getFullYear() + String(today.getMonth()+1).padStart(2,'0') + String(today.getDate()).padStart(2,'0') + '.pdf';
-        doc.save(fileName);
       };
 
       return (
@@ -532,7 +537,7 @@
             <div style={styles.scoresSection}>
               <div style={styles.scoresSectionHeader}>
                 <h3 style={styles.sectionTitle}>{growthdayQuarter} 점수 현황 <span style={styles.scoreCount}>{growthdayStats.length}명 발표</span></h3>
-                {growthdayStats.length > 0 && <button style={styles.pdfExportBtn} onClick={exportToPDF}>📄 PDF 내보내기</button>}
+                {growthdayStats.length > 0 && <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>}
               </div>
               {growthdayStats.length === 0 ? <div style={styles.emptyState}>아직 배점된 점수가 없습니다</div> :
                 <div style={styles.scoresList}>
