@@ -41,28 +41,44 @@
 
     const TEAMS_DATA = {
       "대표이사실": ["이승우"],
+      "경영관리본부": ["백정석"],
       "경영관리팀": ["신나영", "주유진", "김유림"],
-      "그로스팀": ["이재훈"],
+      "그로스팀": ["이재훈", "김범석"],
+      "영업본부": ["황윤선"],
       "서비스운영1팀": ["한준엽", "조재연", "정정훈", "김성민", "한지혜"],
       "서비스운영2팀": ["권정아", "김수진"],
       "서비스운영3팀": ["주현진", "송보람"],
-      "기술연구소": ["신명희", "심혜진", "김소정"],
       "아파트스퀘어팀": ["한인규"],
       "적산팀": ["김영성", "신수진"],
-      "브랜드마케팅팀": ["권혜영", "함지민", "김범석", "김소라"],
+      "설계/적산팀": ["조현식"],
+      "기술연구소": ["신명희", "심혜진", "김소정"],
+      "브랜드마케팅팀": ["권혜영", "함지민", "김소라"],
+      "커머스사업본부": ["허지은"],
       "브랜드커머스팀": ["이란"],
       "미디어커머스팀": ["방현수", "김소연", "남윤정"],
       "해외사업팀": ["김채원", "쩐티리"],
       "모여라딜팀": ["김송희", "이채은"]
     };
 
+    // 본부별 색상 통일
     const TEAM_COLORS = {
-      "대표이사실": "#191F28", "경영관리팀": "#3182F6", "그로스팀": "#00C471",
-      "서비스운영1팀": "#9B59B6", "서비스운영2팀": "#FF6B6B", "서비스운영3팀": "#E67E22",
-      "기술연구소": "#1ABC9C", "아파트스퀘어팀": "#3498DB", "적산팀": "#E74C3C",
-      "브랜드마케팅팀": "#F39C12", "브랜드커머스팀": "#8E44AD", "미디어커머스팀": "#16A085",
-      "해외사업팀": "#2980B9", "모여라딜팀": "#C0392B"
+      "대표이사실": "#191F28",
+      // 경영관리본부 계열 (파란색)
+      "경영관리본부": "#3182F6", "경영관리팀": "#3182F6", "그로스팀": "#5B9DF6",
+      // 영업본부 계열 (보라색)
+      "영업본부": "#9B59B6", "서비스운영1팀": "#9B59B6", "서비스운영2팀": "#A96DC7", "서비스운영3팀": "#B77FD8",
+      "아파트스퀘어팀": "#9B59B6", "적산팀": "#A96DC7", "설계/적산팀": "#B77FD8",
+      // 기술연구소 (독립 - 진한 청록색)
+      "기술연구소": "#0891B2",
+      // 브랜드마케팅팀 (독립 - 주황색)
+      "브랜드마케팅팀": "#F39C12",
+      // 커머스사업본부 계열 (레드/핑크 계열)
+      "커머스사업본부": "#E11D48", "브랜드커머스팀": "#E11D48", "미디어커머스팀": "#F43F5E",
+      "해외사업팀": "#FB7185", "모여라딜팀": "#E11D48"
     };
+
+    // 업로드 체크 제외 인원 (그로스데이 채점만 참여)
+    const EXCLUDED_FROM_UPLOAD = ["백정석", "황윤선", "조현식", "허지은"];
 
     const REGULAR_TEAMS = Object.fromEntries(Object.entries(TEAMS_DATA).filter(([team]) => team !== "대표이사실"));
 
@@ -84,7 +100,7 @@
     const generateEmptyUploadStatus = () => {
       const status = {};
       Object.entries(REGULAR_TEAMS).forEach(([team, members]) => {
-        members.forEach(member => { status[member] = { team, weeks: {} }; });
+        members.filter(m => !EXCLUDED_FROM_UPLOAD.includes(m)).forEach(member => { status[member] = { team, weeks: {} }; });
       });
       return status;
     };
@@ -105,8 +121,16 @@
 
       useEffect(() => {
         if (!db) { setIsLoading(false); return; }
+        
+        // 타임아웃 설정 (5초 후에도 로딩 중이면 강제 해제)
+        const timeout = setTimeout(() => {
+          setIsLoading(false);
+          console.log('Firebase 연결 타임아웃');
+        }, 5000);
+        
         const uploadRef = db.ref('uploadStatus');
         uploadRef.on('value', (snapshot) => {
+          clearTimeout(timeout);
           const data = snapshot.val();
           if (data) {
             setUploadStatus(() => {
@@ -118,15 +142,19 @@
             });
           }
           setIsLoading(false);
+        }, (error) => {
+          clearTimeout(timeout);
+          console.error('Firebase 데이터 로드 오류:', error);
+          setIsLoading(false);
         });
         const scoresRef = db.ref('scores');
-        scoresRef.on('value', (snapshot) => { if (snapshot.val()) setScores(snapshot.val()); });
+        scoresRef.on('value', (snapshot) => { if (snapshot.val()) setScores(snapshot.val()); }, (error) => console.error('scores 로드 오류:', error));
         const growthdayRef = db.ref('growthday');
         growthdayRef.on('value', (snapshot) => {
           const data = snapshot.val();
           if (data) { setGrowthdayActive(data.active || false); setGrowthdayQuarter(data.quarter || ''); }
-        });
-        return () => { uploadRef.off(); scoresRef.off(); growthdayRef.off(); };
+        }, (error) => console.error('growthday 로드 오류:', error));
+        return () => { clearTimeout(timeout); uploadRef.off(); scoresRef.off(); growthdayRef.off(); };
       }, []);
 
       useEffect(() => { localStorage.setItem('growthboard_admin_logged_in', isLoggedIn.toString()); }, [isLoggedIn]);
@@ -150,12 +178,6 @@
         if (!db) { showToast('Firebase 연결 필요'); return; }
         db.ref('growthday/active').set(false);
         showToast('그로스데이가 종료되었습니다');
-      };
-
-      const handleScoreDelete = (presenter, voter) => {
-        if (!db) { showToast('Firebase 연결 필요'); return; }
-        db.ref('scores/' + growthdayQuarter + '/' + presenter + '/' + voter).remove();
-        showToast(voter + '님의 ' + presenter + '님에 대한 배점이 삭제되었습니다');
       };
 
       const getStats = () => {
@@ -220,7 +242,7 @@
           <main style={styles.main}>
             {currentTab === 'dashboard' && <DashboardTab stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} onMissingClick={() => setShowMissingModal(true)} uploadStatus={uploadStatus} />}
             {currentTab === 'members' && <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} />}
-            {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} onScoreDelete={handleScoreDelete} />}
+            {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} />}
           </main>
         </div>
       );
@@ -414,31 +436,285 @@
       const monday = new Date(year, month - 1, day);
       const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
       const selectedWeekLabel = (monday.getMonth()+1) + '/' + monday.getDate() + '~' + (sunday.getMonth()+1) + '/' + sunday.getDate();
+      const [isExporting, setIsExporting] = useState(false);
+
+      // 업로드 대상 인원만 필터링
+      const getUploadMembers = (members) => members.filter(m => !EXCLUDED_FROM_UPLOAD.includes(m));
+
+      // PDF 내보내기
+      const exportMembersPDF = async () => {
+        setIsExporting(true);
+        
+        const today = new Date();
+        const dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+        
+        // 팀별 데이터 준비
+        const teamsData = [];
+        Object.entries(REGULAR_TEAMS).filter(([team]) => selectedTeamFilter === 'all' || team === selectedTeamFilter).forEach(([team, members]) => {
+          const uploadMembers = getUploadMembers(members);
+          if (uploadMembers.length === 0) return;
+          const uploadedMembers = uploadMembers.filter(m => uploadStatus[m]?.weeks?.[selectedWeek]);
+          const notUploadedMembers = uploadMembers.filter(m => !uploadStatus[m]?.weeks?.[selectedWeek]);
+          teamsData.push({ team, uploadMembers, uploadedMembers, notUploadedMembers });
+        });
+        
+        // 전체 통계
+        const totalMembers = Object.keys(uploadStatus).length;
+        const uploadedTotal = Object.values(uploadStatus).filter(s => s.weeks?.[selectedWeek]).length;
+        
+        // 헤더 + 통계 HTML
+        const headerHtml = 
+          '<div style="text-align: center; margin-bottom: 25px;">' +
+            '<h1 style="font-size: 22px; font-weight: 700; color: #191F28; margin-bottom: 6px;">그로스보드 업로드 현황</h1>' +
+            '<div style="font-size: 14px; color: #3182F6; font-weight: 600; margin-bottom: 4px;">' + selectedWeekLabel + '</div>' +
+            '<div style="font-size: 11px; color: #999;">생성일: ' + dateStr + '</div>' +
+          '</div>' +
+          '<div style="display: flex; justify-content: center; gap: 30px; margin-bottom: 25px; padding: 15px; background: #F7F8FA; border-radius: 10px;">' +
+            '<div style="text-align: center;"><div style="font-size: 24px; font-weight: 700; color: #191F28;">' + totalMembers + '</div><div style="font-size: 11px; color: #666;">총 인원</div></div>' +
+            '<div style="text-align: center;"><div style="font-size: 24px; font-weight: 700; color: #00C471;">' + uploadedTotal + '</div><div style="font-size: 11px; color: #666;">완료</div></div>' +
+            '<div style="text-align: center;"><div style="font-size: 24px; font-weight: 700; color: #E54545;">' + (totalMembers - uploadedTotal) + '</div><div style="font-size: 11px; color: #666;">미완료</div></div>' +
+            '<div style="text-align: center;"><div style="font-size: 24px; font-weight: 700; color: #3182F6;">' + Math.round(uploadedTotal/totalMembers*100) + '%</div><div style="font-size: 11px; color: #666;">진행률</div></div>' +
+          '</div>';
+        
+        // 팀 카드 HTML 생성 함수
+        const createTeamCardHtml = (teamData) => {
+          const { team, uploadMembers, uploadedMembers, notUploadedMembers } = teamData;
+          let html = '<div style="border: 1px solid #E5E5E5; border-radius: 10px; padding: 12px; margin-bottom: 10px; background: white;">';
+          html += '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #F4F4F4;">';
+          html += '<div style="width: 10px; height: 10px; border-radius: 50%; background: ' + TEAM_COLORS[team] + ';"></div>';
+          html += '<span style="font-size: 13px; font-weight: 700; color: #191F28;">' + team + '</span>';
+          html += '<span style="margin-left: auto; font-size: 12px; font-weight: 700; color: ' + (uploadedMembers.length === uploadMembers.length ? '#00C471' : '#E54545') + ';">' + uploadedMembers.length + '/' + uploadMembers.length + '</span>';
+          html += '</div>';
+          html += '<div style="display: flex; gap: 15px;">';
+          // 완료
+          html += '<div style="flex: 1;">';
+          html += '<div style="font-size: 10px; color: #00C471; font-weight: 600; margin-bottom: 6px;">✓ 완료 (' + uploadedMembers.length + ')</div>';
+          if (uploadedMembers.length > 0) {
+            html += '<div style="display: flex; flex-wrap: wrap; gap: 4px;">';
+            uploadedMembers.forEach(m => { html += '<span style="padding: 3px 8px; background: #E8FFF3; color: #00C471; border-radius: 4px; font-size: 10px;">' + m + '</span>'; });
+            html += '</div>';
+          } else { html += '<div style="font-size: 10px; color: #999;">-</div>'; }
+          html += '</div>';
+          // 미완료
+          html += '<div style="flex: 1;">';
+          html += '<div style="font-size: 10px; color: #E54545; font-weight: 600; margin-bottom: 6px;">✕ 미완료 (' + notUploadedMembers.length + ')</div>';
+          if (notUploadedMembers.length > 0) {
+            html += '<div style="display: flex; flex-wrap: wrap; gap: 4px;">';
+            notUploadedMembers.forEach(m => { html += '<span style="padding: 3px 8px; background: #FEF1F1; color: #E54545; border-radius: 4px; font-size: 10px;">' + m + '</span>'; });
+            html += '</div>';
+          } else { html += '<div style="font-size: 10px; color: #999;">-</div>'; }
+          html += '</div></div></div>';
+          return html;
+        };
+        
+        try {
+          const { jsPDF } = window.jspdf;
+          const pdf = new jsPDF('l', 'mm', 'a4');
+          const pageWidth = pdf.internal.pageSize.getWidth(); // 297mm
+          const pageHeight = pdf.internal.pageSize.getHeight(); // 210mm
+          const margin = 10;
+          const contentWidth = pageWidth - margin * 2;
+          const colWidth = (contentWidth - 10) / 2;
+          
+          // 헤더 캡처
+          const headerDiv = document.createElement('div');
+          headerDiv.style.cssText = 'position: absolute; left: -9999px; top: 0; width: 1050px; padding: 20px; background: white; font-family: Pretendard, sans-serif;';
+          headerDiv.innerHTML = headerHtml;
+          document.body.appendChild(headerDiv);
+          
+          const headerCanvas = await html2canvas(headerDiv, { scale: 2 });
+          const headerImg = headerCanvas.toDataURL('image/png');
+          const headerImgHeight = (headerCanvas.height * contentWidth) / headerCanvas.width;
+          document.body.removeChild(headerDiv);
+          
+          // 각 팀 카드 캡처
+          const teamCards = [];
+          for (const teamData of teamsData) {
+            const cardDiv = document.createElement('div');
+            cardDiv.style.cssText = 'position: absolute; left: -9999px; top: 0; width: 500px; padding: 10px; background: white; font-family: Pretendard, sans-serif;';
+            cardDiv.innerHTML = createTeamCardHtml(teamData);
+            document.body.appendChild(cardDiv);
+            const cardCanvas = await html2canvas(cardDiv, { scale: 2 });
+            teamCards.push({
+              img: cardCanvas.toDataURL('image/png'),
+              width: colWidth,
+              height: (cardCanvas.height * colWidth) / cardCanvas.width,
+              team: teamData.team
+            });
+            document.body.removeChild(cardDiv);
+          }
+          
+          // PDF에 배치
+          let currentPage = 1;
+          let yPos = margin;
+          
+          // 헤더 추가
+          pdf.addImage(headerImg, 'PNG', margin, yPos, contentWidth, headerImgHeight);
+          yPos += headerImgHeight + 5;
+          
+          // 2열 배치
+          let col = 0;
+          let colYPos = [yPos, yPos];
+          
+          for (const card of teamCards) {
+            // 페이지 넘김 체크
+            if (colYPos[col] + card.height > pageHeight - margin) {
+              // 다른 열 확인
+              const otherCol = col === 0 ? 1 : 0;
+              if (colYPos[otherCol] + card.height <= pageHeight - margin) {
+                col = otherCol;
+              } else {
+                // 새 페이지
+                pdf.addPage();
+                currentPage++;
+                colYPos = [margin, margin];
+                col = 0;
+              }
+            }
+            
+            const xPos = margin + col * (colWidth + 10);
+            pdf.addImage(card.img, 'PNG', xPos, colYPos[col], card.width, card.height);
+            colYPos[col] += card.height + 5;
+            
+            // 다음 열로
+            col = colYPos[0] <= colYPos[1] ? 0 : 1;
+          }
+          
+          // 푸터 추가
+          const totalPages = pdf.internal.getNumberOfPages();
+          for (let i = 1; i <= totalPages; i++) {
+            pdf.setPage(i);
+            pdf.setFontSize(8);
+            pdf.setTextColor(153, 153, 153);
+            pdf.text('Page ' + i + ' / ' + totalPages, pageWidth / 2, pageHeight - 5, { align: 'center' });
+            pdf.text('Netform Growth Board', pageWidth - margin, pageHeight - 5, { align: 'right' });
+          }
+          
+          pdf.save('그로스보드_업로드현황_' + selectedWeekLabel.replace(/\//g, '-') + '.pdf');
+        } catch (err) {
+          console.error('PDF 생성 오류:', err);
+          alert('PDF 생성 중 오류가 발생했습니다.');
+        } finally {
+          setIsExporting(false);
+        }
+      };
+
+      // 미업로드자 리스트 복사
+      const copyMissingList = () => {
+        const now = new Date();
+        const timeStr = String(now.getHours()).padStart(2, '0') + '시' + String(now.getMinutes()).padStart(2, '0') + '분';
+        
+        let missingByTeam = [];
+        Object.entries(REGULAR_TEAMS).filter(([team]) => selectedTeamFilter === 'all' || team === selectedTeamFilter).forEach(([team, members]) => {
+          const uploadMembers = getUploadMembers(members);
+          if (uploadMembers.length === 0) return;
+          const notUploadedMembers = uploadMembers.filter(m => !uploadStatus[m]?.weeks?.[selectedWeek]);
+          if (notUploadedMembers.length > 0) {
+            missingByTeam.push({ team, members: notUploadedMembers });
+          }
+        });
+        
+        if (missingByTeam.length === 0) {
+          alert('미업로드자가 없습니다! 🎉');
+          return;
+        }
+        
+        let text = `📋 ${selectedWeekLabel} ${timeStr} 기준 미업로드자\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n\n`;
+        
+        missingByTeam.forEach(({ team, members }) => {
+          text += `▪️ ${team}\n`;
+          members.forEach(m => {
+            text += `   - ${m}\n`;
+          });
+          text += `\n`;
+        });
+        
+        const totalMissing = missingByTeam.reduce((sum, t) => sum + t.members.length, 0);
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `총 ${totalMissing}명 미업로드`;
+        
+        navigator.clipboard.writeText(text).then(() => {
+          alert('미업로드자 리스트가 복사되었습니다!');
+        }).catch(() => {
+          // 폴백: textarea 이용
+          const textarea = document.createElement('textarea');
+          textarea.value = text;
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand('copy');
+          document.body.removeChild(textarea);
+          alert('미업로드자 리스트가 복사되었습니다!');
+        });
+      };
 
       return (
         <div style={styles.page}>
-          <div style={styles.pageHeader}><h1 style={styles.pageTitle}>인원 관리</h1><p style={styles.pageSubtitle}>직원들의 업로드 상태를 관리하세요</p></div>
+          <div style={styles.pageHeader}>
+            <div>
+              <h1 style={styles.pageTitle}>인원 관리</h1>
+              <p style={styles.pageSubtitle}>직원들의 업로드 상태를 관리하세요</p>
+            </div>
+            <div style={styles.headerButtons}>
+              <button style={styles.copyBtn} onClick={copyMissingList}>📋 미업로드자 복사</button>
+              <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportMembersPDF} disabled={isExporting}>
+                {isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}
+              </button>
+            </div>
+          </div>
           <div style={styles.controlsRow}>
             <WeekCalendar selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} uploadStatus={uploadStatus} />
-            <select value={selectedTeamFilter} onChange={e => setSelectedTeamFilter(e.target.value)} style={styles.teamFilter}><option value="all">전체 부서</option>{Object.keys(REGULAR_TEAMS).map(team => <option key={team} value={team}>{team}</option>)}</select>
+            <select value={selectedTeamFilter} onChange={e => setSelectedTeamFilter(e.target.value)} style={styles.teamFilter}><option value="all">전체 부서</option>{Object.keys(REGULAR_TEAMS).filter(team => getUploadMembers(REGULAR_TEAMS[team]).length > 0).map(team => <option key={team} value={team}>{team}</option>)}</select>
           </div>
           <div style={styles.selectedWeekBanner}>📅 선택된 주: <strong>{selectedWeekLabel}</strong></div>
-          <div style={styles.memberSection}>
-            {Object.entries(REGULAR_TEAMS).filter(([team]) => selectedTeamFilter === 'all' || team === selectedTeamFilter).map(([team, members]) => (
-              <div key={team} style={styles.memberTeamGroup}>
-                <div style={styles.memberTeamHeader}><div style={{...styles.teamDot, backgroundColor: TEAM_COLORS[team]}} /><span>{team}</span><span style={styles.memberTeamCount}>{stats.teamStats[team]?.uploaded || 0}/{stats.teamStats[team]?.total || 0}</span></div>
-                <div style={styles.memberList}>{members.map(member => { const isUploaded = uploadStatus[member]?.weeks?.[selectedWeek]; return <div key={member} style={styles.memberItem}><span style={styles.memberName}>{member}</span><button style={{...styles.memberToggle, backgroundColor: isUploaded ? '#E8F3FF' : '#FEF1F1', color: isUploaded ? '#3182F6' : '#E54545', borderColor: isUploaded ? '#3182F6' : '#E54545'}} onClick={() => onToggle(member, selectedWeek)}>{isUploaded ? '✓ 완료' : '✕ 미완료'}</button></div>; })}</div>
-              </div>
-            ))}
+          
+          <div style={styles.memberCardGrid}>
+            {Object.entries(REGULAR_TEAMS).filter(([team]) => selectedTeamFilter === 'all' || team === selectedTeamFilter).map(([team, members]) => {
+              const uploadMembers = getUploadMembers(members);
+              if (uploadMembers.length === 0) return null;
+              const uploadedCount = uploadMembers.filter(m => uploadStatus[m]?.weeks?.[selectedWeek]).length;
+              
+              return (
+                <div key={team} style={styles.memberCard}>
+                  <div style={styles.memberCardHeader}>
+                    <div style={{...styles.memberCardDot, backgroundColor: TEAM_COLORS[team]}} />
+                    <span style={styles.memberCardTeam}>{team}</span>
+                    <span style={{...styles.memberCardCount, color: uploadedCount === uploadMembers.length ? '#00C471' : '#E54545'}}>
+                      {uploadedCount}/{uploadMembers.length}
+                    </span>
+                  </div>
+                  
+                  <div style={styles.memberListInCard}>
+                    {uploadMembers.map(member => {
+                      const isUploaded = uploadStatus[member]?.weeks?.[selectedWeek];
+                      return (
+                        <div key={member} style={{...styles.memberItemInCard, backgroundColor: isUploaded ? '#F0FDF4' : '#FEF2F2'}}>
+                          <span style={{...styles.memberNameInCard, color: isUploaded ? '#166534' : '#991B1B'}}>{member}</span>
+                          <button 
+                            style={{...styles.statusToggleBtn, backgroundColor: isUploaded ? '#22C55E' : '#EF4444'}}
+                            onClick={() => onToggle(member, selectedWeek)}
+                          >
+                            {isUploaded ? '✓' : '✕'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  <div style={styles.memberCardProgress}>
+                    <div style={{...styles.memberCardProgressFill, width: (uploadedCount / uploadMembers.length * 100) + '%', backgroundColor: TEAM_COLORS[team]}} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       );
     }
 
-    function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, onStartClick, onStop, onScoreDelete }) {
+    function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, onStartClick, onStop }) {
       const [selectedPresenter, setSelectedPresenter] = useState(null);
       const [isExporting, setIsExporting] = useState(false);
-      const [deleteConfirm, setDeleteConfirm] = useState(null); // { presenter, voter, voterName }
       const selectedData = growthdayStats.find(r => r.name === selectedPresenter);
 
       const exportToPDF = async () => {
@@ -570,35 +846,11 @@
                   {selectedData.voterDetails.map(voter => (
                     <div key={voter.name} style={styles.voterItem}>
                       <div style={styles.voterInfo}><div style={{...styles.voterAvatar, backgroundColor: TEAM_COLORS[voter.team]}}>{voter.name[0]}</div><div><div style={styles.voterName}>{voter.name}{voter.isCEO && <span style={styles.ceoBadgeSmall}>x2</span>}</div><div style={styles.voterTeam}>{voter.team}</div></div></div>
-                      <div style={styles.voterActions}>
-                        <div style={styles.voterScoreBox}><span style={styles.voterScore}>{voter.finalScore}</span><span style={styles.voterScoreUnit}>점</span></div>
-                        <button style={styles.deleteScoreBtn} onClick={(e) => { e.stopPropagation(); setDeleteConfirm({ presenter: selectedData.name, voter: voter.name, voterName: voter.name }); }}>삭제</button>
-                      </div>
+                      <div style={styles.voterScoreBox}><span style={styles.voterScore}>{voter.finalScore}</span><span style={styles.voterScoreUnit}>점</span></div>
                     </div>
                   ))}
                 </div>
                 <div style={styles.totalSummary}><span>평균 점수</span><span style={styles.totalSummaryValue}>{selectedData.averageScore}점</span></div>
-              </div>
-            </div>
-          )}
-          {deleteConfirm && (
-            <div style={styles.modalOverlay} onClick={() => setDeleteConfirm(null)}>
-              <div style={{...styles.modal, maxWidth: '380px'}} onClick={e => e.stopPropagation()}>
-                <div style={styles.modalHeader}><h3 style={{...styles.modalTitle, color: '#E54545'}}>⚠️ 배점 삭제</h3><button style={styles.modalClose} onClick={() => setDeleteConfirm(null)}>✕</button></div>
-                <div style={styles.deleteConfirmText}><strong>{deleteConfirm.voterName}</strong>님이 <strong>{deleteConfirm.presenter}</strong>님에게 준 배점을 삭제하시겠습니까?</div>
-                <div style={styles.deleteWarning}>삭제된 배점은 복구할 수 없습니다.</div>
-                <div style={styles.modalActions}>
-                  <button style={styles.cancelBtn} onClick={() => setDeleteConfirm(null)}>취소</button>
-                  <button style={styles.deleteConfirmBtn} onClick={() => { 
-                    onScoreDelete(deleteConfirm.presenter, deleteConfirm.voter); 
-                    setDeleteConfirm(null);
-                    // 삭제 후 발표자의 평가자가 0명이 되면 모달 닫기
-                    const updatedData = growthdayStats.find(r => r.name === deleteConfirm.presenter);
-                    if (updatedData && updatedData.voterDetails.length <= 1) {
-                      setSelectedPresenter(null);
-                    }
-                  }}>삭제하기</button>
-                </div>
               </div>
             </div>
           )}
@@ -655,7 +907,7 @@
       logoutBtn: { padding: '10px 16px', border: '1px solid #444', backgroundColor: 'transparent', borderRadius: '8px', fontSize: '13px', fontWeight: '500', color: '#999', cursor: 'pointer' },
       main: { maxWidth: '1400px', margin: '0 auto', padding: '32px 24px' },
       page: {},
-      pageHeader: { marginBottom: '28px' },
+      pageHeader: { marginBottom: '28px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' },
       pageTitle: { fontSize: '28px', fontWeight: '700', color: '#191F28', marginBottom: '8px' },
       pageSubtitle: { fontSize: '16px', color: '#666' },
       calendarContainer: { backgroundColor: '#FFF', borderRadius: '16px', padding: '24px', marginBottom: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
@@ -709,6 +961,26 @@
       memberItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #F4F4F4' },
       memberName: { fontSize: '14px', color: '#333', fontWeight: '500' },
       memberToggle: { padding: '6px 12px', border: '1px solid', borderRadius: '6px', fontSize: '13px', fontWeight: '600', cursor: 'pointer' },
+      // 카드 그리드 스타일
+      memberCardGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' },
+      memberCard: { backgroundColor: '#FFF', borderRadius: '16px', padding: '20px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)' },
+      memberCardHeader: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' },
+      memberCardDot: { width: '12px', height: '12px', borderRadius: '50%' },
+      memberCardTeam: { fontSize: '15px', fontWeight: '700', color: '#191F28', flex: 1 },
+      memberCardCount: { fontSize: '14px', fontWeight: '700' },
+      notUploadedSection: { marginBottom: '12px' },
+      notUploadedLabel: { fontSize: '12px', color: '#E54545', fontWeight: '600', marginBottom: '8px' },
+      notUploadedList: { display: 'flex', flexDirection: 'column', gap: '8px' },
+      notUploadedItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', backgroundColor: '#FEF1F1', borderRadius: '8px' },
+      notUploadedName: { fontSize: '14px', fontWeight: '500', color: '#E54545' },
+      quickCompleteBtn: { padding: '5px 12px', border: 'none', backgroundColor: '#E54545', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#FFF', cursor: 'pointer' },
+      allCompleteMessage: { textAlign: 'center', padding: '20px', color: '#00C471', fontSize: '15px', fontWeight: '600' },
+      memberCardProgress: { height: '6px', backgroundColor: '#E5E5E5', borderRadius: '3px', overflow: 'hidden', marginTop: '12px' },
+      memberCardProgressFill: { height: '100%', borderRadius: '3px', transition: 'width 0.3s ease' },
+      memberListInCard: { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '12px' },
+      memberItemInCard: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: '8px' },
+      memberNameInCard: { fontSize: '13px', fontWeight: '500' },
+      statusToggleBtn: { width: '28px', height: '28px', border: 'none', borderRadius: '6px', color: '#FFF', fontSize: '14px', fontWeight: '700', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
       growthdayControlCard: { backgroundColor: '#FFF', borderRadius: '16px', padding: '28px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', marginBottom: '16px' },
       growthdayControlHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
       growthdayControlTitle: { fontSize: '18px', fontWeight: '600', color: '#191F28', marginBottom: '4px' },
@@ -722,6 +994,8 @@
       scoresSectionHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
       scoreCount: { fontSize: '14px', fontWeight: '500', color: '#666' },
       pdfExportBtn: { padding: '10px 20px', border: '1px solid #3182F6', backgroundColor: '#E8F3FF', borderRadius: '10px', fontSize: '14px', fontWeight: '600', color: '#3182F6', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' },
+      headerButtons: { display: 'flex', gap: '10px' },
+      copyBtn: { padding: '10px 20px', border: '1px solid #00C471', backgroundColor: '#E8FFF3', borderRadius: '10px', fontSize: '14px', fontWeight: '600', color: '#00C471', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' },
       emptyState: { backgroundColor: '#FFF', borderRadius: '16px', padding: '64px', textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', color: '#999' },
       scoresList: { display: 'flex', flexDirection: 'column', gap: '12px' },
       scoreCard: { display: 'flex', alignItems: 'center', gap: '16px', padding: '20px', backgroundColor: '#FFF', borderRadius: '12px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', cursor: 'pointer' },
@@ -748,11 +1022,6 @@
       voterScoreBox: { textAlign: 'right' },
       voterScore: { fontSize: '20px', fontWeight: '700', color: '#3182F6' },
       voterScoreUnit: { fontSize: '13px', color: '#666', marginLeft: '2px' },
-      voterActions: { display: 'flex', alignItems: 'center', gap: '12px' },
-      deleteScoreBtn: { padding: '6px 12px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#E54545', cursor: 'pointer' },
-      deleteConfirmText: { fontSize: '15px', color: '#333', lineHeight: '1.6', marginBottom: '12px' },
-      deleteWarning: { fontSize: '13px', color: '#E54545', padding: '12px', backgroundColor: '#FEF1F1', borderRadius: '8px', marginBottom: '20px' },
-      deleteConfirmBtn: { flex: 1, padding: '14px', border: 'none', backgroundColor: '#E54545', borderRadius: '10px', fontSize: '15px', fontWeight: '600', color: '#FFF', cursor: 'pointer' },
       totalSummary: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', backgroundColor: '#E8F3FF', borderRadius: '12px', marginTop: '16px', fontSize: '15px', fontWeight: '600', color: '#3182F6' },
       totalSummaryValue: { fontSize: '20px', fontWeight: '700' },
     };
