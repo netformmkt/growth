@@ -183,9 +183,16 @@
           return;
         }
 
+        // 타임아웃 설정 (5초 후에도 로딩 중이면 강제 해제)
+        const timeout = setTimeout(() => {
+          setIsLoading(false);
+          console.log('Firebase 연결 타임아웃');
+        }, 5000);
+
         // 업로드 상태 리스너
         const uploadRef = db.ref('uploadStatus');
         uploadRef.on('value', (snapshot) => {
+          clearTimeout(timeout);
           const data = snapshot.val();
           if (data) {
             setUploadStatus(prev => {
@@ -199,6 +206,10 @@
             });
           }
           setIsLoading(false);
+        }, (error) => {
+          clearTimeout(timeout);
+          console.error('Firebase 데이터 로드 오류:', error);
+          setIsLoading(false);
         });
 
         // 점수 리스너
@@ -206,7 +217,7 @@
         scoresRef.on('value', (snapshot) => {
           const data = snapshot.val();
           if (data) setScores(data);
-        });
+        }, (error) => console.error('scores 로드 오류:', error));
 
         // 그로스데이 상태 리스너
         const growthdayRef = db.ref('growthday');
@@ -216,9 +227,10 @@
             setGrowthdayActive(data.active || false);
             setGrowthdayQuarter(data.quarter || '');
           }
-        });
+        }, (error) => console.error('growthday 로드 오류:', error));
 
         return () => {
+          clearTimeout(timeout);
           uploadRef.off();
           scoresRef.off();
           growthdayRef.off();
