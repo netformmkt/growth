@@ -29,7 +29,7 @@
     const firebaseConfig = {
       apiKey: "AIzaSyDIlXh7hkdymo_3XNnTHvDllrBO5jnJwsI",
       authDomain: "growthboard-netform.firebaseapp.com",
-      databaseURL: "https://growthboard-netform-default-rtdb.asia-southeast1.firebasedatabase.app",
+      databaseURL: "https://growthboard-e79f8-default-rtdb.asia-southeast1.firebasedatabase.app",
       projectId: "growthboard-netform",
       storageBucket: "growthboard-netform.firebasestorage.app",
       messagingSenderId: "489120165966",
@@ -163,21 +163,24 @@
 
       const handleUploadToggle = (member, weekId) => {
         if (!db) { showToast('Firebase 연결 필요'); return; }
-        db.ref('uploadStatus/' + member + '/weeks/' + weekId).set(!(uploadStatus[member]?.weeks?.[weekId] || false));
-        showToast(member + '님의 업로드 상태가 변경되었습니다');
+        const newStatus = !(uploadStatus[member]?.weeks?.[weekId] || false);
+        db.ref('uploadStatus/' + member + '/weeks/' + weekId).set(newStatus)
+          .then(() => showToast(member + '님의 업로드 상태가 변경되었습니다'))
+          .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
       const handleGrowthdayStart = (year, quarter) => {
         if (!db) { showToast('Firebase 연결 필요'); return; }
-        db.ref('growthday').set({ active: true, quarter: year + '년 ' + quarter + '분기' });
-        setShowGrowthdayModal(false);
-        showToast(year + '년 ' + quarter + '분기 그로스데이가 시작되었습니다');
+        db.ref('growthday').set({ active: true, quarter: year + '년 ' + quarter + '분기' })
+          .then(() => { setShowGrowthdayModal(false); showToast(year + '년 ' + quarter + '분기 그로스데이가 시작되었습니다'); })
+          .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
       const handleGrowthdayStop = () => {
         if (!db) { showToast('Firebase 연결 필요'); return; }
-        db.ref('growthday/active').set(false);
-        showToast('그로스데이가 종료되었습니다');
+        db.ref('growthday/active').set(false)
+          .then(() => showToast('그로스데이가 종료되었습니다'))
+          .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
       const getStats = () => {
