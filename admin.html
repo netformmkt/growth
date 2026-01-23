@@ -52,9 +52,9 @@
       "적산팀": ["김영성", "신수진"],
       "설계/적산팀": ["조현식"],
       "기술연구소": ["신명희", "심혜진", "김소정"],
-      "브랜드마케팅팀": ["권혜영", "함지민", "김소라"],
+      "브랜드마케팅팀": ["권혜영", "함지민", "김소라", "손예진", "최경선"],
       "커머스사업본부": ["허지은"],
-      "브랜드커머스팀": ["이란"],
+      "브랜드커머스팀": ["이란", "김민지"],
       "미디어커머스팀": ["방현수", "김소연", "남윤정"],
       "해외사업팀": ["김채원", "쩐티리"],
       "모여라딜팀": ["김송희", "이채은"]
@@ -183,6 +183,21 @@
           .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
+      const handleDeleteScore = (presenter, voter) => {
+        if (!db) { showToast('Firebase 연결 필요'); return; }
+        if (!window.confirm(`${voter}님이 ${presenter}님에게 준 점수를 삭제하시겠습니까?`)) return;
+        db.ref(`scores/${growthdayQuarter}/${presenter}/${voter}`).remove()
+          .then(() => showToast(`${voter}님의 점수가 삭제되었습니다`))
+          .catch((error) => { console.error('Firebase 삭제 오류:', error); showToast('삭제 실패: Firebase 권한을 확인하세요'); });
+      };
+
+      const handleUpdateScore = (presenter, voter, newScores, isCEO) => {
+        if (!db) { showToast('Firebase 연결 필요'); return; }
+        db.ref(`scores/${growthdayQuarter}/${presenter}/${voter}`).set({ scores: newScores, isCEO })
+          .then(() => showToast(`${voter}님의 점수가 수정되었습니다`))
+          .catch((error) => { console.error('Firebase 수정 오류:', error); showToast('수정 실패: Firebase 권한을 확인하세요'); });
+      };
+
       const getStats = () => {
         const totalMembers = Object.keys(uploadStatus).length;
         const currentWeekUploads = Object.values(uploadStatus).filter(s => s.weeks?.[selectedWeek]).length;
@@ -245,7 +260,7 @@
           <main style={styles.main}>
             {currentTab === 'dashboard' && <DashboardTab stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} onMissingClick={() => setShowMissingModal(true)} uploadStatus={uploadStatus} />}
             {currentTab === 'members' && <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} />}
-            {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} />}
+            {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} scores={scores} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} onDeleteScore={handleDeleteScore} onUpdateScore={handleUpdateScore} />}
           </main>
         </div>
       );
@@ -715,10 +730,36 @@
       );
     }
 
-    function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, onStartClick, onStop }) {
+    function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, scores, onStartClick, onStop, onDeleteScore, onUpdateScore }) {
       const [selectedPresenter, setSelectedPresenter] = useState(null);
       const [isExporting, setIsExporting] = useState(false);
+      const [editingVoter, setEditingVoter] = useState(null);
+      const [editScores, setEditScores] = useState({});
       const selectedData = growthdayStats.find(r => r.name === selectedPresenter);
+
+      const SCORING_CRITERIA = [
+        { id: 'goal', name: '목표와 성과', maxScore: 30 },
+        { id: 'growth', name: '개인 성장', maxScore: 20 },
+        { id: 'learning', name: '학습/실패 공유', maxScore: 20 },
+        { id: 'collaboration', name: '협업과 기여', maxScore: 15 },
+        { id: 'presentation', name: '발표력', maxScore: 15 },
+      ];
+
+      const openEditModal = (presenter, voter) => {
+        const voterData = scores[growthdayQuarter]?.[presenter]?.[voter];
+        if (voterData) {
+          setEditScores(voterData.scores || {});
+          setEditingVoter({ presenter, voter, isCEO: voterData.isCEO });
+        }
+      };
+
+      const handleSaveEdit = () => {
+        if (editingVoter) {
+          onUpdateScore(editingVoter.presenter, editingVoter.voter, editScores, editingVoter.isCEO);
+          setEditingVoter(null);
+          setEditScores({});
+        }
+      };
 
       const exportToPDF = async () => {
         setIsExporting(true);
@@ -849,11 +890,40 @@
                   {selectedData.voterDetails.map(voter => (
                     <div key={voter.name} style={styles.voterItem}>
                       <div style={styles.voterInfo}><div style={{...styles.voterAvatar, backgroundColor: TEAM_COLORS[voter.team]}}>{voter.name[0]}</div><div><div style={styles.voterName}>{voter.name}{voter.isCEO && <span style={styles.ceoBadgeSmall}>x2</span>}</div><div style={styles.voterTeam}>{voter.team}</div></div></div>
-                      <div style={styles.voterScoreBox}><span style={styles.voterScore}>{voter.finalScore}</span><span style={styles.voterScoreUnit}>점</span></div>
+                      <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                        <div style={styles.voterScoreBox}><span style={styles.voterScore}>{voter.finalScore}</span><span style={styles.voterScoreUnit}>점</span></div>
+                        <button style={{padding: '6px 10px', border: '1px solid #3182F6', backgroundColor: '#E8F3FF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#3182F6', cursor: 'pointer'}} onClick={() => openEditModal(selectedData.name, voter.name)}>수정</button>
+                        <button style={{padding: '6px 10px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#E54545', cursor: 'pointer'}} onClick={() => onDeleteScore(selectedData.name, voter.name)}>삭제</button>
+                      </div>
                     </div>
                   ))}
                 </div>
                 <div style={styles.totalSummary}><span>평균 점수</span><span style={styles.totalSummaryValue}>{selectedData.averageScore}점</span></div>
+              </div>
+            </div>
+          )}
+          {editingVoter && (
+            <div style={styles.modalOverlay} onClick={() => setEditingVoter(null)}>
+              <div style={{...styles.modal, maxWidth: '400px'}} onClick={e => e.stopPropagation()}>
+                <div style={styles.modalHeader}><h3 style={styles.modalTitle}>점수 수정</h3><button style={styles.modalClose} onClick={() => setEditingVoter(null)}>✕</button></div>
+                <div style={styles.modalSubtitle}>{editingVoter.voter}님이 {editingVoter.presenter}님에게 준 점수</div>
+                <div style={{display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px'}}>
+                  {SCORING_CRITERIA.map(criteria => (
+                    <div key={criteria.id} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', backgroundColor: '#F7F8FA', borderRadius: '8px'}}>
+                      <div><div style={{fontSize: '14px', fontWeight: '600', color: '#191F28'}}>{criteria.name}</div><div style={{fontSize: '12px', color: '#666'}}>최대 {criteria.maxScore}점</div></div>
+                      <input type="number" min="0" max={criteria.maxScore} value={editScores[criteria.id] || 0} onChange={e => setEditScores({...editScores, [criteria.id]: Math.min(criteria.maxScore, Math.max(0, parseInt(e.target.value) || 0))})} style={{width: '70px', padding: '8px 12px', border: '1px solid #E5E5E5', borderRadius: '6px', fontSize: '16px', fontWeight: '600', textAlign: 'center'}} />
+                    </div>
+                  ))}
+                </div>
+                <div style={{padding: '16px', backgroundColor: '#E8F3FF', borderRadius: '10px', marginTop: '16px', textAlign: 'center'}}>
+                  <span style={{fontSize: '14px', color: '#3182F6'}}>총점: </span>
+                  <span style={{fontSize: '20px', fontWeight: '700', color: '#3182F6'}}>{Object.values(editScores).reduce((a, b) => a + b, 0)}</span>
+                  <span style={{fontSize: '14px', color: '#3182F6'}}>점 {editingVoter.isCEO && '(x2 = ' + (Object.values(editScores).reduce((a, b) => a + b, 0) * 2) + '점)'}</span>
+                </div>
+                <div style={styles.modalActions}>
+                  <button style={styles.cancelBtn} onClick={() => setEditingVoter(null)}>취소</button>
+                  <button style={styles.confirmBtn} onClick={handleSaveEdit}>저장</button>
+                </div>
               </div>
             </div>
           )}
