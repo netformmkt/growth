@@ -170,6 +170,12 @@
       const [growthdayActive, setGrowthdayActive] = useState(false);
       const [growthdayQuarter, setGrowthdayQuarter] = useState('');
       const [isLoading, setIsLoading] = useState(true);
+      const [pins, setPins] = useState({});
+      const [showPinModal, setShowPinModal] = useState(false);
+      const [pinMode, setPinMode] = useState(''); // 'setup' or 'verify'
+      const [pinInput, setPinInput] = useState(['', '', '', '']);
+      const [pinConfirm, setPinConfirm] = useState(['', '', '', '']);
+      const [pinError, setPinError] = useState('');
       
       const weeks = generateRecentWeeks(5);
       const [selectedWeek, setSelectedWeek] = useState(weeks[weeks.length - 1]?.weekId || '');
@@ -229,11 +235,19 @@
           }
         }, (error) => console.error('growthday 로드 오류:', error));
 
+        // PIN 리스너
+        const pinsRef = db.ref('pins');
+        pinsRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) setPins(data);
+        }, (error) => console.error('pins 로드 오류:', error));
+
         return () => {
           clearTimeout(timeout);
           uploadRef.off();
           scoresRef.off();
           growthdayRef.off();
+          pinsRef.off();
         };
       }, []);
 
@@ -245,6 +259,93 @@
       const showToast = (message) => { setToast(message); setTimeout(() => setToast(null), 2500); };
       const handleLogin = (team, name) => { setLoggedInUser({ team, name }); showToast(`${name}님 환영합니다!`); };
       const handleLogout = () => { setLoggedInUser(null); setCurrentPage('upload'); showToast('로그아웃되었습니다'); };
+
+      // PIN 관련 함수들
+      const handleGrowthTabClick = () => {
+        if (!loggedInUser) return;
+        const userPin = pins[loggedInUser.name];
+        if (!userPin) {
+          // PIN 설정 모달 열기
+          setPinMode('setup');
+          setPinInput(['', '', '', '']);
+          setPinConfirm(['', '', '', '']);
+          setPinError('');
+          setShowPinModal(true);
+        } else {
+          // PIN 확인 모달 열기
+          setPinMode('verify');
+          setPinInput(['', '', '', '']);
+          setPinError('');
+          setShowPinModal(true);
+        }
+      };
+
+      const handlePinInputChange = (index, value, isConfirm = false) => {
+        if (value.length > 1) value = value.slice(-1);
+        if (!/^\d*$/.test(value)) return;
+        
+        if (isConfirm) {
+          const newPin = [...pinConfirm];
+          newPin[index] = value;
+          setPinConfirm(newPin);
+          if (value && index < 3) {
+            setTimeout(() => document.getElementById(`pin-confirm-${index + 1}`)?.focus(), 0);
+          }
+        } else {
+          const newPin = [...pinInput];
+          newPin[index] = value;
+          setPinInput(newPin);
+          if (value && index < 3) {
+            setTimeout(() => document.getElementById(`pin-input-${index + 1}`)?.focus(), 0);
+          }
+        }
+      };
+
+      const handlePinKeyDown = (index, e, isConfirm = false) => {
+        if (e.key === 'Backspace' && !e.target.value && index > 0) {
+          const prevId = isConfirm ? `pin-confirm-${index - 1}` : `pin-input-${index - 1}`;
+          document.getElementById(prevId)?.focus();
+        }
+      };
+
+      const handlePinSetup = () => {
+        const pin = pinInput.join('');
+        const confirm = pinConfirm.join('');
+        
+        if (pin.length !== 4) {
+          setPinError('PIN 4자리를 모두 입력해주세요');
+          return;
+        }
+        if (pin !== confirm) {
+          setPinError('PIN이 일치하지 않습니다');
+          return;
+        }
+        
+        db.ref(`pins/${loggedInUser.name}`).set(pin)
+          .then(() => {
+            setShowPinModal(false);
+            setCurrentPage('growth');
+            showToast('PIN이 설정되었습니다');
+          })
+          .catch((error) => {
+            console.error('PIN 저장 오류:', error);
+            setPinError('PIN 저장에 실패했습니다');
+          });
+      };
+
+      const handlePinVerify = () => {
+        const pin = pinInput.join('');
+        const userPin = pins[loggedInUser.name];
+        
+        if (pin === userPin) {
+          setShowPinModal(false);
+          setCurrentPage('growth');
+        } else {
+          setPinError('PIN이 일치하지 않습니다');
+          setPinInput(['', '', '', '']);
+          setTimeout(() => document.getElementById('pin-input-0')?.focus(), 0);
+        }
+      };
 
       const handleUploadCheck = (member, weekId) => {
         if (!db) {
@@ -301,6 +402,78 @@
         <div style={styles.container}>
           {toast && <div style={styles.toast}>✓ {toast}</div>}
 
+          {/* PIN 모달 */}
+          {showPinModal && (
+            <div style={styles.pinModalOverlay}>
+              <div style={styles.pinModal}>
+                <button style={styles.pinModalClose} onClick={() => setShowPinModal(false)}>✕</button>
+                <div style={styles.pinModalIcon}>🔐</div>
+                <h3 style={styles.pinModalTitle}>
+                  {pinMode === 'setup' ? 'PIN 설정' : 'PIN 입력'}
+                </h3>
+                <p style={styles.pinModalDesc}>
+                  {pinMode === 'setup' 
+                    ? '그로스데이 배점을 위한 4자리 PIN을 설정해주세요' 
+                    : '그로스데이 배점을 위해 PIN을 입력해주세요'}
+                </p>
+                
+                {pinMode === 'setup' && (
+                  <div style={styles.pinInputLabel}>PIN 입력</div>
+                )}
+                <div style={styles.pinInputRow}>
+                  {[0, 1, 2, 3].map(i => (
+                    <input
+                      key={i}
+                      id={`pin-input-${i}`}
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={1}
+                      value={pinInput[i]}
+                      onChange={(e) => handlePinInputChange(i, e.target.value)}
+                      onKeyDown={(e) => handlePinKeyDown(i, e)}
+                      style={styles.pinInputBox}
+                      autoFocus={i === 0}
+                    />
+                  ))}
+                </div>
+                
+                {pinMode === 'setup' && (
+                  <>
+                    <div style={styles.pinInputLabel}>PIN 확인</div>
+                    <div style={styles.pinInputRow}>
+                      {[0, 1, 2, 3].map(i => (
+                        <input
+                          key={i}
+                          id={`pin-confirm-${i}`}
+                          type="password"
+                          inputMode="numeric"
+                          maxLength={1}
+                          value={pinConfirm[i]}
+                          onChange={(e) => handlePinInputChange(i, e.target.value, true)}
+                          onKeyDown={(e) => handlePinKeyDown(i, e, true)}
+                          style={styles.pinInputBox}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+                
+                {pinError && <div style={styles.pinError}>{pinError}</div>}
+                
+                <button 
+                  style={styles.pinSubmitBtn}
+                  onClick={pinMode === 'setup' ? handlePinSetup : handlePinVerify}
+                >
+                  {pinMode === 'setup' ? 'PIN 설정' : '확인'}
+                </button>
+                
+                {pinMode === 'verify' && (
+                  <div style={styles.pinForgot}>PIN을 잊으셨나요? 관리자에게 문의해주세요.</div>
+                )}
+              </div>
+            </div>
+          )}
+
           <header style={styles.header}>
             <div style={styles.headerContent}>
               <div style={styles.logo} onClick={() => setCurrentPage('upload')}>
@@ -334,7 +507,7 @@
             {growthdayActive && growthdayQuarter && (
               <button 
                 style={{...styles.bottomNavBtn, ...(currentPage === 'growth' ? styles.bottomNavBtnActive : {})}}
-                onClick={() => setCurrentPage('growth')}
+                onClick={handleGrowthTabClick}
               >
                 <div style={styles.liveIndicatorWrapper}>
                   <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
@@ -378,7 +551,7 @@
                     : '현재 그로스데이 배점이 진행 중이 아닙니다.'}
                 </p>
                 {growthdayActive && growthdayQuarter && (
-                  <button style={styles.ceoBtn} onClick={() => setCurrentPage('growth')}>
+                  <button style={styles.ceoBtn} onClick={handleGrowthTabClick}>
                     배점하러 가기 →
                   </button>
                 )}
@@ -762,6 +935,20 @@
     const styles = {
       container: { minHeight: '100vh', backgroundColor: '#F7F8FA', paddingBottom: '80px' },
       toast: { position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#191F28', color: '#FFF', padding: '12px 20px', borderRadius: '10px', fontSize: '14px', fontWeight: '500', zIndex: 1000, animation: 'slideUp 0.3s ease' },
+      
+      // PIN 모달 스타일
+      pinModalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: '20px' },
+      pinModal: { backgroundColor: '#FFF', borderRadius: '20px', padding: '32px 28px', width: '100%', maxWidth: '360px', textAlign: 'center', position: 'relative' },
+      pinModalClose: { position: 'absolute', top: '16px', right: '16px', background: 'none', border: 'none', fontSize: '20px', color: '#999', cursor: 'pointer' },
+      pinModalIcon: { fontSize: '48px', marginBottom: '16px' },
+      pinModalTitle: { fontSize: '22px', fontWeight: '700', color: '#191F28', marginBottom: '8px' },
+      pinModalDesc: { fontSize: '14px', color: '#666', marginBottom: '24px', lineHeight: '1.5' },
+      pinInputLabel: { fontSize: '13px', fontWeight: '600', color: '#333', textAlign: 'left', marginBottom: '8px', marginTop: '16px' },
+      pinInputRow: { display: 'flex', justifyContent: 'center', gap: '12px', marginBottom: '8px' },
+      pinInputBox: { width: '56px', height: '56px', border: '2px solid #E5E5E5', borderRadius: '12px', fontSize: '24px', fontWeight: '700', textAlign: 'center', color: '#191F28' },
+      pinError: { color: '#E54545', fontSize: '13px', marginTop: '12px', marginBottom: '8px' },
+      pinSubmitBtn: { width: '100%', padding: '16px', border: 'none', backgroundColor: '#3182F6', borderRadius: '12px', fontSize: '16px', fontWeight: '600', color: '#FFF', cursor: 'pointer', marginTop: '20px' },
+      pinForgot: { fontSize: '13px', color: '#999', marginTop: '16px' },
       
       header: { backgroundColor: '#FFF', borderBottom: '1px solid #F0F0F0', position: 'sticky', top: 0, zIndex: 100 },
       headerContent: { maxWidth: '600px', margin: '0 auto', padding: '12px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
