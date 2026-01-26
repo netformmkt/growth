@@ -183,17 +183,19 @@
           .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
-      const handleDeleteScore = (presenter, voter) => {
+      const handleDeleteScore = (presenter, voter, quarter) => {
         if (!db) { showToast('Firebase 연결 필요'); return; }
+        const targetQuarter = quarter || growthdayQuarter;
         if (!window.confirm(`${voter}님이 ${presenter}님에게 준 점수를 삭제하시겠습니까?`)) return;
-        db.ref(`scores/${growthdayQuarter}/${presenter}/${voter}`).remove()
+        db.ref(`scores/${targetQuarter}/${presenter}/${voter}`).remove()
           .then(() => showToast(`${voter}님의 점수가 삭제되었습니다`))
           .catch((error) => { console.error('Firebase 삭제 오류:', error); showToast('삭제 실패: Firebase 권한을 확인하세요'); });
       };
 
-      const handleUpdateScore = (presenter, voter, newScores, isCEO) => {
+      const handleUpdateScore = (presenter, voter, newScores, isCEO, quarter) => {
         if (!db) { showToast('Firebase 연결 필요'); return; }
-        db.ref(`scores/${growthdayQuarter}/${presenter}/${voter}`).set({ scores: newScores, isCEO })
+        const targetQuarter = quarter || growthdayQuarter;
+        db.ref(`scores/${targetQuarter}/${presenter}/${voter}`).set({ scores: newScores, isCEO })
           .then(() => showToast(`${voter}님의 점수가 수정되었습니다`))
           .catch((error) => { console.error('Firebase 수정 오류:', error); showToast('수정 실패: Firebase 권한을 확인하세요'); });
       };
@@ -219,18 +221,53 @@
         Object.entries(quarterScores).forEach(([presenter, voters]) => {
           const voterList = Object.entries(voters);
           if (voterList.length === 0) return;
-          let totalScore = 0;
+          
           const voterDetails = [];
+          const ceoVoters = [];
+          const regularVoters = [];
+          
           voterList.forEach(([voter, data]) => {
             const baseScore = Object.values(data.scores).reduce((a, b) => a + b, 0);
             const finalScore = data.isCEO ? baseScore * 2 : baseScore;
-            totalScore += finalScore;
             const voterTeam = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(voter))?.[0] || '';
-            voterDetails.push({ name: voter, team: voterTeam, baseScore, finalScore, isCEO: data.isCEO });
+            const voterData = { name: voter, team: voterTeam, baseScore, finalScore, isCEO: data.isCEO };
+            voterDetails.push(voterData);
+            
+            if (data.isCEO) {
+              ceoVoters.push(voterData);
+            } else {
+              regularVoters.push(voterData);
+            }
           });
-          const averageScore = voterList.length > 0 ? totalScore / voterList.length : 0;
+          
+          // 일반 평가자 중 최고점/최저점 제외 (3명 이상일 때만)
+          let filteredRegularVoters = [...regularVoters];
+          let excludedVoters = [];
+          if (regularVoters.length >= 3) {
+            const sorted = [...regularVoters].sort((a, b) => a.finalScore - b.finalScore);
+            const minVoter = sorted[0];
+            const maxVoter = sorted[sorted.length - 1];
+            excludedVoters = [minVoter.name, maxVoter.name];
+            filteredRegularVoters = regularVoters.filter(v => v.name !== minVoter.name && v.name !== maxVoter.name);
+          }
+          
+          // 평균 계산: 대표 + 필터링된 일반 평가자
+          const countedVoters = [...ceoVoters, ...filteredRegularVoters];
+          const totalScore = countedVoters.reduce((sum, v) => sum + v.finalScore, 0);
+          const averageScore = countedVoters.length > 0 ? totalScore / countedVoters.length : 0;
+          
           const team = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(presenter))?.[0] || '';
-          results.push({ name: presenter, team, voterCount: voterList.length, averageScore: averageScore.toFixed(1), ceoVoted: voterList.some(([, data]) => data.isCEO), voterDetails, totalScore });
+          results.push({ 
+            name: presenter, 
+            team, 
+            voterCount: voterList.length, 
+            countedVoterCount: countedVoters.length,
+            averageScore: averageScore.toFixed(1), 
+            ceoVoted: ceoVoters.length > 0, 
+            voterDetails: voterDetails.map(v => ({...v, excluded: excludedVoters.includes(v.name)})), 
+            totalScore,
+            excludedVoters
+          });
         });
         return results.sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
       };
@@ -735,7 +772,83 @@
       const [isExporting, setIsExporting] = useState(false);
       const [editingVoter, setEditingVoter] = useState(null);
       const [editScores, setEditScores] = useState({});
-      const selectedData = growthdayStats.find(r => r.name === selectedPresenter);
+      const [selectedViewQuarter, setSelectedViewQuarter] = useState('');
+      
+      // scores에서 모든 분기 목록 추출 (최신순 정렬)
+      const allQuarters = Object.keys(scores || {}).sort((a, b) => {
+        const parseQuarter = (q) => {
+          const match = q.match(/(\d+)년\s*(\d+)분기/);
+          if (match) return parseInt(match[1]) * 10 + parseInt(match[2]);
+          return 0;
+        };
+        return parseQuarter(b) - parseQuarter(a);
+      });
+      
+      // 초기값 설정: 현재 활성화된 분기 또는 첫 번째 분기
+      React.useEffect(() => {
+        if (!selectedViewQuarter && allQuarters.length > 0) {
+          setSelectedViewQuarter(growthdayQuarter || allQuarters[0]);
+        }
+      }, [allQuarters, growthdayQuarter]);
+      
+      // 선택된 분기의 통계 계산 (최고/최저점 제외 로직 포함)
+      const getQuarterStats = (quarter) => {
+        const quarterScores = scores[quarter] || {};
+        const results = [];
+        Object.entries(quarterScores).forEach(([presenter, voters]) => {
+          const voterList = Object.entries(voters);
+          if (voterList.length === 0) return;
+          
+          const voterDetails = [];
+          const ceoVoters = [];
+          const regularVoters = [];
+          
+          voterList.forEach(([voter, data]) => {
+            const baseScore = Object.values(data.scores).reduce((a, b) => a + b, 0);
+            const finalScore = data.isCEO ? baseScore * 2 : baseScore;
+            const voterTeam = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(voter))?.[0] || '';
+            const voterData = { name: voter, team: voterTeam, baseScore, finalScore, isCEO: data.isCEO };
+            voterDetails.push(voterData);
+            
+            if (data.isCEO) {
+              ceoVoters.push(voterData);
+            } else {
+              regularVoters.push(voterData);
+            }
+          });
+          
+          let filteredRegularVoters = [...regularVoters];
+          let excludedVoters = [];
+          if (regularVoters.length >= 3) {
+            const sorted = [...regularVoters].sort((a, b) => a.finalScore - b.finalScore);
+            const minVoter = sorted[0];
+            const maxVoter = sorted[sorted.length - 1];
+            excludedVoters = [minVoter.name, maxVoter.name];
+            filteredRegularVoters = regularVoters.filter(v => v.name !== minVoter.name && v.name !== maxVoter.name);
+          }
+          
+          const countedVoters = [...ceoVoters, ...filteredRegularVoters];
+          const totalScore = countedVoters.reduce((sum, v) => sum + v.finalScore, 0);
+          const averageScore = countedVoters.length > 0 ? totalScore / countedVoters.length : 0;
+          
+          const team = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(presenter))?.[0] || '';
+          results.push({ 
+            name: presenter, 
+            team, 
+            voterCount: voterList.length, 
+            countedVoterCount: countedVoters.length,
+            averageScore: averageScore.toFixed(1), 
+            ceoVoted: ceoVoters.length > 0, 
+            voterDetails: voterDetails.map(v => ({...v, excluded: excludedVoters.includes(v.name)})), 
+            totalScore,
+            excludedVoters
+          });
+        });
+        return results.sort((a, b) => parseFloat(b.averageScore) - parseFloat(a.averageScore));
+      };
+      
+      const viewStats = selectedViewQuarter ? getQuarterStats(selectedViewQuarter) : [];
+      const selectedData = viewStats.find(r => r.name === selectedPresenter);
 
       const SCORING_CRITERIA = [
         { id: 'goal', name: '목표와 성과', maxScore: 30 },
@@ -746,16 +859,16 @@
       ];
 
       const openEditModal = (presenter, voter) => {
-        const voterData = scores[growthdayQuarter]?.[presenter]?.[voter];
+        const voterData = scores[selectedViewQuarter]?.[presenter]?.[voter];
         if (voterData) {
           setEditScores(voterData.scores || {});
-          setEditingVoter({ presenter, voter, isCEO: voterData.isCEO });
+          setEditingVoter({ presenter, voter, isCEO: voterData.isCEO, quarter: selectedViewQuarter });
         }
       };
 
       const handleSaveEdit = () => {
         if (editingVoter) {
-          onUpdateScore(editingVoter.presenter, editingVoter.voter, editScores, editingVoter.isCEO);
+          onUpdateScore(editingVoter.presenter, editingVoter.voter, editScores, editingVoter.isCEO, editingVoter.quarter);
           setEditingVoter(null);
           setEditScores({});
         }
@@ -774,11 +887,11 @@
         pdfContent.innerHTML = `
           <div style="text-align: center; margin-bottom: 30px;">
             <h1 style="font-size: 28px; font-weight: 700; color: #191F28; margin-bottom: 8px;">그로스데이 점수 리포트</h1>
-            <div style="font-size: 18px; color: #3182F6; font-weight: 600; margin-bottom: 4px;">${growthdayQuarter}</div>
+            <div style="font-size: 18px; color: #3182F6; font-weight: 600; margin-bottom: 4px;">${selectedViewQuarter}</div>
             <div style="font-size: 12px; color: #999;">생성일: ${dateStr}</div>
           </div>
           <div style="border-top: 2px solid #E5E5E5; padding-top: 20px; margin-bottom: 20px;">
-            <div style="font-size: 14px; color: #333; margin-bottom: 15px;">총 발표자: <strong>${growthdayStats.length}명</strong></div>
+            <div style="font-size: 14px; color: #333; margin-bottom: 15px;">총 발표자: <strong>${viewStats.length}명</strong> (최고/최저점 제외 후 평균)</div>
           </div>
           <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
             <thead>
@@ -786,12 +899,12 @@
                 <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 60px;">순위</th>
                 <th style="padding: 12px 8px; text-align: left; color: #666; font-weight: 600;">이름</th>
                 <th style="padding: 12px 8px; text-align: left; color: #666; font-weight: 600;">소속</th>
-                <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 80px;">평가인원</th>
+                <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 80px;">반영인원</th>
                 <th style="padding: 12px 8px; text-align: center; color: #666; font-weight: 600; width: 80px;">평균점수</th>
               </tr>
             </thead>
             <tbody>
-              ${growthdayStats.map((result, index) => {
+              ${viewStats.map((result, index) => {
                 const rankStyle = index === 0 ? 'background: #FFD700; color: white;' 
                   : index === 1 ? 'background: #C0C0C0; color: white;' 
                   : index === 2 ? 'background: #CD7F32; color: white;' : 'background: #F4F4F4; color: #666;';
@@ -802,7 +915,7 @@
                     </td>
                     <td style="padding: 14px 8px; font-weight: 600; color: #191F28;">${result.name}</td>
                     <td style="padding: 14px 8px; color: #666;">${result.team}</td>
-                    <td style="padding: 14px 8px; text-align: center; color: #666;">${result.voterCount}명 ${result.ceoVoted ? '⭐' : ''}</td>
+                    <td style="padding: 14px 8px; text-align: center; color: #666;">${result.countedVoterCount}명 ${result.ceoVoted ? '⭐' : ''}</td>
                     <td style="padding: 14px 8px; text-align: center; font-weight: 700; color: #3182F6; font-size: 16px;">${result.averageScore}</td>
                   </tr>
                 `;
@@ -810,7 +923,7 @@
             </tbody>
           </table>
           <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #E5E5E5;">
-            <div style="font-size: 11px; color: #999;">⭐ 대표이사 평가 (x2 배점 적용)</div>
+            <div style="font-size: 11px; color: #999;">⭐ 대표이사 평가 (x2 배점 적용) · 최고점/최저점 각 1개 제외</div>
             <div style="font-size: 11px; color: #999; margin-top: 4px;">Netform Growth Board</div>
           </div>
         `;
@@ -841,7 +954,7 @@
             heightLeft -= (pdfHeight - 20);
           }
           
-          const fileName = '그로스데이_' + growthdayQuarter.replace(/\s/g, '_') + '_' + dateStr + '.pdf';
+          const fileName = '그로스데이_' + selectedViewQuarter.replace(/\s/g, '_') + '_' + dateStr + '.pdf';
           pdf.save(fileName);
         } catch (err) {
           console.error('PDF 생성 오류:', err);
@@ -859,46 +972,82 @@
             <div style={styles.growthdayControlHeader}><div><div style={styles.growthdayControlTitle}>그로스데이 배점</div><div style={styles.growthdayControlDesc}>{growthdayActive ? growthdayQuarter + ' 배점이 진행 중입니다' : '새로운 그로스데이를 시작하세요'}</div></div>{growthdayActive ? <button style={styles.stopBtn} onClick={onStop}>종료하기</button> : <button style={styles.startBtn} onClick={onStartClick}>시작하기</button>}</div>
             <div style={{...styles.statusBanner, backgroundColor: growthdayActive ? '#E8FFF3' : '#F4F4F4', color: growthdayActive ? '#00C471' : '#666'}}><div style={{...styles.statusDot, backgroundColor: growthdayActive ? '#00C471' : '#999'}} />{growthdayActive ? growthdayQuarter + ' 그로스데이 배점이 진행 중입니다' : '그로스데이 배점이 비활성화되어 있습니다'}</div>
           </div>
-          <div style={styles.scoreInfoCard}>⭐ 대표이사님의 배점은 <strong>2배</strong>로 반영됩니다 (최대 200점)</div>
-          {growthdayActive && (
-            <div style={styles.scoresSection}>
-              <div style={styles.scoresSectionHeader}>
-                <h3 style={styles.sectionTitle}>{growthdayQuarter} 점수 현황 <span style={styles.scoreCount}>{growthdayStats.length}명 발표</span></h3>
-                {growthdayStats.length > 0 && <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>}
+          <div style={styles.scoreInfoCard}>⭐ 대표이사님의 배점은 <strong>2배</strong>로 반영됩니다 (최대 200점) · 최고점/최저점 각 1개 제외</div>
+          
+          {/* 분기 선택 및 점수 현황 - 항상 표시 */}
+          <div style={styles.scoresSection}>
+            <div style={styles.scoresSectionHeader}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+                <h3 style={styles.sectionTitle}>점수 현황</h3>
+                <select 
+                  value={selectedViewQuarter} 
+                  onChange={(e) => { setSelectedViewQuarter(e.target.value); setSelectedPresenter(null); }}
+                  style={{padding: '10px 16px', border: '1px solid #E5E5E5', borderRadius: '8px', fontSize: '14px', fontWeight: '600', backgroundColor: '#FFF', cursor: 'pointer', color: '#191F28'}}
+                >
+                  {allQuarters.length === 0 ? (
+                    <option value="">데이터 없음</option>
+                  ) : (
+                    allQuarters.map(q => (
+                      <option key={q} value={q}>{q} {q === growthdayQuarter && growthdayActive ? '(진행중)' : ''}</option>
+                    ))
+                  )}
+                </select>
+                <span style={styles.scoreCount}>{viewStats.length}명 발표</span>
               </div>
-              {growthdayStats.length === 0 ? <div style={styles.emptyState}>아직 배점된 점수가 없습니다</div> :
-                <div style={styles.scoresList}>
-                  {growthdayStats.map((result, index) => (
-                    <div key={result.name} style={styles.scoreCard} onClick={() => setSelectedPresenter(result.name)}>
-                      <div style={styles.scoreRank}>{index < 3 ? <div style={{...styles.rankBadge, backgroundColor: index === 0 ? '#FFD700' : index === 1 ? '#C0C0C0' : '#CD7F32'}}>{index + 1}</div> : <span style={styles.rankNumber}>{index + 1}</span>}</div>
-                      <div style={{...styles.scoreAvatar, backgroundColor: TEAM_COLORS[result.team]}}>{result.name[0]}</div>
-                      <div style={styles.scoreInfo}><div style={styles.scoreName}>{result.name}</div><div style={styles.scoreTeam}>{result.team}</div></div>
-                      <div style={styles.scoreVoters}>{result.voterCount}명 평가 {result.ceoVoted && '⭐'}</div>
-                      <div style={styles.scoreTotalValue}><span style={styles.scoreNumber}>{result.averageScore}</span><span style={styles.scoreUnit}>점</span></div>
-                      <span style={styles.detailArrow}>→</span>
-                    </div>
-                  ))}
-                </div>}
+              {viewStats.length > 0 && <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>}
             </div>
-          )}
+            {allQuarters.length === 0 ? (
+              <div style={styles.emptyState}>아직 배점된 데이터가 없습니다</div>
+            ) : viewStats.length === 0 ? (
+              <div style={styles.emptyState}>선택된 분기에 배점된 점수가 없습니다</div>
+            ) : (
+              <div style={styles.scoresList}>
+                {viewStats.map((result, index) => (
+                  <div key={result.name} style={styles.scoreCard} onClick={() => setSelectedPresenter(result.name)}>
+                    <div style={styles.scoreRank}>{index < 3 ? <div style={{...styles.rankBadge, backgroundColor: index === 0 ? '#FFD700' : index === 1 ? '#C0C0C0' : '#CD7F32'}}>{index + 1}</div> : <span style={styles.rankNumber}>{index + 1}</span>}</div>
+                    <div style={{...styles.scoreAvatar, backgroundColor: TEAM_COLORS[result.team]}}>{result.name[0]}</div>
+                    <div style={styles.scoreInfo}><div style={styles.scoreName}>{result.name}</div><div style={styles.scoreTeam}>{result.team}</div></div>
+                    <div style={styles.scoreVoters}>{result.countedVoterCount}명 반영 {result.ceoVoted && '⭐'}</div>
+                    <div style={styles.scoreTotalValue}><span style={styles.scoreNumber}>{result.averageScore}</span><span style={styles.scoreUnit}>점</span></div>
+                    <span style={styles.detailArrow}>→</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           {selectedPresenter && selectedData && (
             <div style={styles.modalOverlay} onClick={() => setSelectedPresenter(null)}>
               <div style={styles.modal} onClick={e => e.stopPropagation()}>
                 <div style={styles.modalHeader}><h3 style={styles.modalTitle}><div style={{...styles.modalAvatar, backgroundColor: TEAM_COLORS[selectedData.team]}}>{selectedData.name[0]}</div>{selectedData.name} 점수 상세</h3><button style={styles.modalClose} onClick={() => setSelectedPresenter(null)}>✕</button></div>
-                <div style={styles.modalSubtitle}>{selectedData.team} · 평균 {selectedData.averageScore}점</div>
+                <div style={styles.modalSubtitle}>{selectedData.team} · 평균 {selectedData.averageScore}점 ({selectedData.countedVoterCount}명 반영) · {selectedViewQuarter}</div>
+                {selectedData.excludedVoters?.length > 0 && (
+                  <div style={{padding: '10px 14px', backgroundColor: '#FFF8E6', borderRadius: '8px', marginBottom: '12px', fontSize: '13px', color: '#B8860B'}}>
+                    ⚠️ 최고점/최저점 제외: {selectedData.excludedVoters.join(', ')}
+                  </div>
+                )}
                 <div style={styles.voterList}>
                   {selectedData.voterDetails.map(voter => (
-                    <div key={voter.name} style={styles.voterItem}>
-                      <div style={styles.voterInfo}><div style={{...styles.voterAvatar, backgroundColor: TEAM_COLORS[voter.team]}}>{voter.name[0]}</div><div><div style={styles.voterName}>{voter.name}{voter.isCEO && <span style={styles.ceoBadgeSmall}>x2</span>}</div><div style={styles.voterTeam}>{voter.team}</div></div></div>
+                    <div key={voter.name} style={{...styles.voterItem, opacity: voter.excluded ? 0.5 : 1, backgroundColor: voter.excluded ? '#F9F9F9' : 'transparent'}}>
+                      <div style={styles.voterInfo}>
+                        <div style={{...styles.voterAvatar, backgroundColor: TEAM_COLORS[voter.team]}}>{voter.name[0]}</div>
+                        <div>
+                          <div style={styles.voterName}>
+                            {voter.name}
+                            {voter.isCEO && <span style={styles.ceoBadgeSmall}>x2</span>}
+                            {voter.excluded && <span style={{marginLeft: '6px', padding: '2px 6px', backgroundColor: '#FFE066', borderRadius: '4px', fontSize: '10px', fontWeight: '600', color: '#8B6914'}}>제외</span>}
+                          </div>
+                          <div style={styles.voterTeam}>{voter.team}</div>
+                        </div>
+                      </div>
                       <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                        <div style={styles.voterScoreBox}><span style={styles.voterScore}>{voter.finalScore}</span><span style={styles.voterScoreUnit}>점</span></div>
+                        <div style={styles.voterScoreBox}><span style={{...styles.voterScore, textDecoration: voter.excluded ? 'line-through' : 'none'}}>{voter.finalScore}</span><span style={styles.voterScoreUnit}>점</span></div>
                         <button style={{padding: '6px 10px', border: '1px solid #3182F6', backgroundColor: '#E8F3FF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#3182F6', cursor: 'pointer'}} onClick={() => openEditModal(selectedData.name, voter.name)}>수정</button>
-                        <button style={{padding: '6px 10px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#E54545', cursor: 'pointer'}} onClick={() => onDeleteScore(selectedData.name, voter.name)}>삭제</button>
+                        <button style={{padding: '6px 10px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#E54545', cursor: 'pointer'}} onClick={() => onDeleteScore(selectedData.name, voter.name, selectedViewQuarter)}>삭제</button>
                       </div>
                     </div>
                   ))}
                 </div>
-                <div style={styles.totalSummary}><span>평균 점수</span><span style={styles.totalSummaryValue}>{selectedData.averageScore}점</span></div>
+                <div style={styles.totalSummary}><span>평균 점수 ({selectedData.countedVoterCount}명 반영)</span><span style={styles.totalSummaryValue}>{selectedData.averageScore}점</span></div>
               </div>
             </div>
           )}
