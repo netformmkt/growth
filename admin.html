@@ -118,6 +118,7 @@
       const [selectedTeamFilter, setSelectedTeamFilter] = useState('all');
       const [showMissingModal, setShowMissingModal] = useState(false);
       const [showGrowthdayModal, setShowGrowthdayModal] = useState(false);
+      const [pins, setPins] = useState({});
 
       useEffect(() => {
         if (!db) { setIsLoading(false); return; }
@@ -154,7 +155,14 @@
           const data = snapshot.val();
           if (data) { setGrowthdayActive(data.active || false); setGrowthdayQuarter(data.quarter || ''); }
         }, (error) => console.error('growthday 로드 오류:', error));
-        return () => { clearTimeout(timeout); uploadRef.off(); scoresRef.off(); growthdayRef.off(); };
+        
+        const pinsRef = db.ref('pins');
+        pinsRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) setPins(data);
+        }, (error) => console.error('pins 로드 오류:', error));
+        
+        return () => { clearTimeout(timeout); uploadRef.off(); scoresRef.off(); growthdayRef.off(); pinsRef.off(); };
       }, []);
 
       useEffect(() => { localStorage.setItem('growthboard_admin_logged_in', isLoggedIn.toString()); }, [isLoggedIn]);
@@ -169,10 +177,11 @@
           .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
-      const handleGrowthdayStart = (year, quarter) => {
+      const handleGrowthdayStart = (year, quarter, round) => {
         if (!db) { showToast('Firebase 연결 필요'); return; }
-        db.ref('growthday').set({ active: true, quarter: year + '년 ' + quarter + '분기' })
-          .then(() => { setShowGrowthdayModal(false); showToast(year + '년 ' + quarter + '분기 그로스데이가 시작되었습니다'); })
+        const quarterName = year + '년 ' + quarter + '분기 ' + round + '차';
+        db.ref('growthday').set({ active: true, quarter: quarterName })
+          .then(() => { setShowGrowthdayModal(false); showToast(quarterName + ' 그로스데이가 시작되었습니다'); })
           .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
       };
 
@@ -181,6 +190,14 @@
         db.ref('growthday/active').set(false)
           .then(() => showToast('그로스데이가 종료되었습니다'))
           .catch((error) => { console.error('Firebase 쓰기 오류:', error); showToast('저장 실패: Firebase 권한을 확인하세요'); });
+      };
+
+      const handlePinReset = (memberName) => {
+        if (!db) { showToast('Firebase 연결 필요'); return; }
+        if (!window.confirm(`${memberName}님의 PIN을 초기화하시겠습니까?`)) return;
+        db.ref(`pins/${memberName}`).remove()
+          .then(() => showToast(`${memberName}님의 PIN이 초기화되었습니다`))
+          .catch((error) => { console.error('PIN 초기화 오류:', error); showToast('초기화 실패: Firebase 권한을 확인하세요'); });
       };
 
       const handleDeleteScore = (presenter, voter, quarter) => {
@@ -296,7 +313,7 @@
           </header>
           <main style={styles.main}>
             {currentTab === 'dashboard' && <DashboardTab stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} onMissingClick={() => setShowMissingModal(true)} uploadStatus={uploadStatus} />}
-            {currentTab === 'members' && <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} />}
+            {currentTab === 'members' && <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} pins={pins} onPinReset={handlePinReset} />}
             {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} scores={scores} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} onDeleteScore={handleDeleteScore} onUpdateScore={handleUpdateScore} />}
           </main>
         </div>
@@ -353,15 +370,17 @@
       const currentYear = new Date().getFullYear();
       const [year, setYear] = useState(currentYear);
       const [quarter, setQuarter] = useState(Math.ceil((new Date().getMonth() + 1) / 3));
+      const [round, setRound] = useState(1);
       return (
         <div style={styles.modalOverlay} onClick={onClose}>
           <div style={styles.modal} onClick={e => e.stopPropagation()}>
             <div style={styles.modalHeader}><h3 style={styles.modalTitle}>그로스데이 시작</h3><button style={styles.modalClose} onClick={onClose}>✕</button></div>
-            <div style={styles.modalSubtitle}>배점을 진행할 분기를 선택해주세요</div>
+            <div style={styles.modalSubtitle}>배점을 진행할 분기와 회차를 선택해주세요</div>
             <div style={styles.selectGroup}><label style={styles.selectLabel}>연도</label><div style={styles.selectButtons}>{[currentYear, currentYear+1, currentYear+2, currentYear+3].map(y => <button key={y} style={{...styles.selectBtn, ...(year === y ? styles.selectBtnActive : {})}} onClick={() => setYear(y)}>{y}년</button>)}</div></div>
             <div style={styles.selectGroup}><label style={styles.selectLabel}>분기</label><div style={styles.selectButtons}>{[1,2,3,4].map(q => <button key={q} style={{...styles.selectBtn, ...(quarter === q ? styles.selectBtnActive : {})}} onClick={() => setQuarter(q)}>{q}분기</button>)}</div></div>
-            <div style={styles.previewBanner}>📌 <strong>{year}년 {quarter}분기</strong> 그로스데이가 시작됩니다</div>
-            <div style={styles.modalActions}><button style={styles.cancelBtn} onClick={onClose}>취소</button><button style={styles.confirmBtn} onClick={() => onStart(year, quarter)}>시작하기</button></div>
+            <div style={styles.selectGroup}><label style={styles.selectLabel}>회차</label><div style={styles.selectButtons}>{[1,2,3,4,5].map(r => <button key={r} style={{...styles.selectBtn, ...(round === r ? styles.selectBtnActive : {})}} onClick={() => setRound(r)}>{r}차</button>)}</div></div>
+            <div style={styles.previewBanner}>📌 <strong>{year}년 {quarter}분기 {round}차</strong> 그로스데이가 시작됩니다</div>
+            <div style={styles.modalActions}><button style={styles.cancelBtn} onClick={onClose}>취소</button><button style={styles.confirmBtn} onClick={() => onStart(year, quarter, round)}>시작하기</button></div>
           </div>
         </div>
       );
@@ -486,12 +505,13 @@
       );
     }
 
-    function MembersTab({ uploadStatus, stats, selectedWeek, setSelectedWeek, onToggle, selectedTeamFilter, setSelectedTeamFilter }) {
+    function MembersTab({ uploadStatus, stats, selectedWeek, setSelectedWeek, onToggle, selectedTeamFilter, setSelectedTeamFilter, pins, onPinReset }) {
       const [year, month, day] = selectedWeek.split('-').map(Number);
       const monday = new Date(year, month - 1, day);
       const sunday = new Date(monday); sunday.setDate(monday.getDate() + 6);
       const selectedWeekLabel = (monday.getMonth()+1) + '/' + monday.getDate() + '~' + (sunday.getMonth()+1) + '/' + sunday.getDate();
       const [isExporting, setIsExporting] = useState(false);
+      const [showPinSection, setShowPinSection] = useState(false);
 
       // 업로드 대상 인원만 필터링
       const getUploadMembers = (members) => members.filter(m => !EXCLUDED_FROM_UPLOAD.includes(m));
@@ -763,6 +783,63 @@
               );
             })}
           </div>
+          
+          {/* PIN 관리 섹션 */}
+          <div style={{marginTop: '32px', padding: '20px', backgroundColor: '#FFF', borderRadius: '16px', border: '1px solid #E5E5E5'}}>
+            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: showPinSection ? '16px' : '0'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                <span style={{fontSize: '20px'}}>🔐</span>
+                <div>
+                  <h3 style={{fontSize: '16px', fontWeight: '700', color: '#191F28'}}>PIN 관리</h3>
+                  <p style={{fontSize: '13px', color: '#666'}}>직원들의 그로스데이 PIN을 관리하세요</p>
+                </div>
+              </div>
+              <button 
+                style={{padding: '8px 16px', border: '1px solid #E5E5E5', backgroundColor: '#F7F8FA', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#333', cursor: 'pointer'}}
+                onClick={() => setShowPinSection(!showPinSection)}
+              >
+                {showPinSection ? '접기 ▲' : '펼치기 ▼'}
+              </button>
+            </div>
+            
+            {showPinSection && (
+              <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px'}}>
+                {Object.entries(TEAMS_DATA).filter(([team]) => team !== '대표이사실').map(([team, members]) => (
+                  <div key={team} style={{border: '1px solid #F0F0F0', borderRadius: '12px', padding: '12px'}}>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px', paddingBottom: '8px', borderBottom: '1px solid #F4F4F4'}}>
+                      <div style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: TEAM_COLORS[team]}} />
+                      <span style={{fontSize: '13px', fontWeight: '700', color: '#191F28'}}>{team}</span>
+                    </div>
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '6px'}}>
+                      {members.map(member => {
+                        const hasPin = !!pins[member];
+                        return (
+                          <div key={member} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', backgroundColor: hasPin ? '#F0FDF4' : '#F7F8FA', borderRadius: '8px'}}>
+                            <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                              <span style={{fontSize: '13px', fontWeight: '500', color: '#333'}}>{member}</span>
+                              {hasPin ? (
+                                <span style={{padding: '2px 6px', backgroundColor: '#DCFCE7', color: '#166534', borderRadius: '4px', fontSize: '10px', fontWeight: '600'}}>PIN 설정됨</span>
+                              ) : (
+                                <span style={{padding: '2px 6px', backgroundColor: '#FEF3C7', color: '#92400E', borderRadius: '4px', fontSize: '10px', fontWeight: '600'}}>미설정</span>
+                              )}
+                            </div>
+                            {hasPin && (
+                              <button 
+                                style={{padding: '4px 10px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '6px', fontSize: '11px', fontWeight: '600', color: '#E54545', cursor: 'pointer'}}
+                                onClick={() => onPinReset(member)}
+                              >
+                                초기화
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       );
     }
@@ -775,21 +852,38 @@
       const [selectedViewQuarter, setSelectedViewQuarter] = useState('');
       
       // scores에서 모든 분기 목록 추출 (최신순 정렬)
-      const allQuarters = Object.keys(scores || {}).sort((a, b) => {
+      const scoreQuarters = Object.keys(scores || {}).sort((a, b) => {
         const parseQuarter = (q) => {
-          const match = q.match(/(\d+)년\s*(\d+)분기/);
-          if (match) return parseInt(match[1]) * 10 + parseInt(match[2]);
+          // "2026년 1분기 2차" 또는 "2026년 1분기" 형식 파싱
+          const match = q.match(/(\d+)년\s*(\d+)분기(?:\s*(\d+)차)?/);
+          if (match) {
+            const year = parseInt(match[1]);
+            const quarter = parseInt(match[2]);
+            const round = match[3] ? parseInt(match[3]) : 0;
+            return year * 100 + quarter * 10 + round;
+          }
           return 0;
         };
         return parseQuarter(b) - parseQuarter(a);
       });
       
-      // 초기값 설정: 현재 활성화된 분기 또는 첫 번째 분기
-      React.useEffect(() => {
-        if (!selectedViewQuarter && allQuarters.length > 0) {
-          setSelectedViewQuarter(growthdayQuarter || allQuarters[0]);
+      // 현재 진행중인 분기가 scores에 없으면 드롭다운에 추가
+      const allQuarters = React.useMemo(() => {
+        const quarters = [...scoreQuarters];
+        if (growthdayActive && growthdayQuarter && !quarters.includes(growthdayQuarter)) {
+          quarters.unshift(growthdayQuarter);
         }
-      }, [allQuarters, growthdayQuarter]);
+        return quarters;
+      }, [scoreQuarters, growthdayActive, growthdayQuarter]);
+      
+      // 초기값 설정: 현재 활성화된 분기 우선
+      React.useEffect(() => {
+        if (growthdayActive && growthdayQuarter) {
+          setSelectedViewQuarter(growthdayQuarter);
+        } else if (!selectedViewQuarter && allQuarters.length > 0) {
+          setSelectedViewQuarter(allQuarters[0]);
+        }
+      }, [growthdayActive, growthdayQuarter, allQuarters]);
       
       // 선택된 분기의 통계 계산 (최고/최저점 제외 로직 포함)
       const getQuarterStats = (quarter) => {
