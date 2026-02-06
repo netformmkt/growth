@@ -11,6 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1059,6 +1060,74 @@
         }
       };
 
+      const exportToExcel = () => {
+        if (!selectedViewQuarter || viewStats.length === 0) {
+          alert('내보낼 데이터가 없습니다.');
+          return;
+        }
+
+        const quarterScores = scores[selectedViewQuarter] || {};
+        const excelData = [];
+
+        // 헤더 추가
+        excelData.push(['발표자', '발표자 팀', '평가자', '평가자 팀', 'CEO 여부', '목표와 성과 (30점)', '개인 성장 (20점)', '학습/실패 공유 (20점)', '협업과 기여 (15점)', '발표력 (15점)', '총점 (기본)', '총점 (가중)']);
+
+        // 각 발표자별 데이터 추가
+        Object.entries(quarterScores).forEach(([presenter, voters]) => {
+          const presenterTeam = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(presenter))?.[0] || '';
+
+          Object.entries(voters).forEach(([voter, data]) => {
+            const voterTeam = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(voter))?.[0] || '';
+            const scores = data.scores || {};
+            const baseScore = Object.values(scores).reduce((a, b) => a + b, 0);
+            const finalScore = data.isCEO ? baseScore * 2 : baseScore;
+
+            excelData.push([
+              presenter,
+              presenterTeam,
+              voter,
+              voterTeam,
+              data.isCEO ? 'O' : 'X',
+              scores.goal || 0,
+              scores.growth || 0,
+              scores.learning || 0,
+              scores.collaboration || 0,
+              scores.presentation || 0,
+              baseScore,
+              finalScore
+            ]);
+          });
+        });
+
+        // 엑셀 파일 생성
+        const ws = window.XLSX.utils.aoa_to_sheet(excelData);
+
+        // 열 너비 설정
+        ws['!cols'] = [
+          { wch: 12 }, // 발표자
+          { wch: 18 }, // 발표자 팀
+          { wch: 12 }, // 평가자
+          { wch: 18 }, // 평가자 팀
+          { wch: 10 }, // CEO 여부
+          { wch: 18 }, // 목표와 성과
+          { wch: 16 }, // 개인 성장
+          { wch: 18 }, // 학습/실패 공유
+          { wch: 16 }, // 협업과 기여
+          { wch: 12 }, // 발표력
+          { wch: 14 }, // 총점 (기본)
+          { wch: 14 }  // 총점 (가중)
+        ];
+
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, '로우데이터');
+
+        const today = new Date();
+        const dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+        const fileName = '그로스데이_로우데이터_' + selectedViewQuarter.replace(/\s/g, '_') + '_' + dateStr + '.xlsx';
+
+        window.XLSX.writeFile(wb, fileName);
+      };
+
       return (
         <div style={styles.page}>
           <div style={styles.pageHeader}><h1 style={styles.pageTitle}>그로스데이 관리</h1><p style={styles.pageSubtitle}>그로스데이 활성화 및 점수 현황을 관리하세요</p></div>
@@ -1088,7 +1157,12 @@
                 </select>
                 <span style={styles.scoreCount}>{viewStats.length}명 발표</span>
               </div>
-              {viewStats.length > 0 && <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>}
+              {viewStats.length > 0 && (
+                <div style={{display: 'flex', gap: '12px'}}>
+                  <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>
+                  <button style={styles.pdfExportBtn} onClick={exportToExcel}>📊 로우데이터 내보내기</button>
+                </div>
+              )}
             </div>
             {allQuarters.length === 0 ? (
               <div style={styles.emptyState}>아직 배점된 데이터가 없습니다</div>
