@@ -165,7 +165,7 @@
         return saved ? JSON.parse(saved) : null;
       });
       const [currentPage, setCurrentPage] = useState('upload');
-      const [uploadStatus, setUploadStatus] = useState(generateEmptyUploadStatus());
+      const [uploadStatus, setUploadStatus] = useState({});
       const [scores, setScores] = useState({});
       const [growthdayActive, setGrowthdayActive] = useState(false);
       const [growthdayQuarter, setGrowthdayQuarter] = useState('');
@@ -176,6 +176,50 @@
       const [pinInput, setPinInput] = useState(['', '', '', '']);
       const [pinConfirm, setPinConfirm] = useState(['', '', '', '']);
       const [pinError, setPinError] = useState('');
+      const [firebaseTeams, setFirebaseTeams] = useState(null);
+      
+      // Firebase teams 또는 기본 TEAMS_DATA 사용
+      const activeTeamsData = React.useMemo(() => {
+        if (firebaseTeams) {
+          const converted = {};
+          Object.entries(firebaseTeams).forEach(([key, data]) => {
+            const displayName = data.displayName || key;
+            converted[displayName] = data.members || [];
+          });
+          return converted;
+        }
+        return TEAMS_DATA;
+      }, [firebaseTeams]);
+      
+      const activeTeamColors = React.useMemo(() => {
+        if (firebaseTeams) {
+          const colors = {};
+          Object.entries(firebaseTeams).forEach(([key, data]) => {
+            const displayName = data.displayName || key;
+            colors[displayName] = data.color || '#3182F6';
+          });
+          return colors;
+        }
+        return TEAM_COLORS;
+      }, [firebaseTeams]);
+      
+      const regularTeams = React.useMemo(() => {
+        return Object.fromEntries(Object.entries(activeTeamsData).filter(([team]) => team !== "대표이사실"));
+      }, [activeTeamsData]);
+      
+      const regularMembers = React.useMemo(() => {
+        return Object.values(regularTeams).flat();
+      }, [regularTeams]);
+      
+      const generateDynamicUploadStatus = React.useCallback(() => {
+        const status = {};
+        Object.entries(regularTeams).forEach(([team, members]) => {
+          members.forEach(member => {
+            status[member] = { team, weeks: {} };
+          });
+        });
+        return status;
+      }, [regularTeams]);
       
       const weeks = generateRecentWeeks(5);
       const [selectedWeek, setSelectedWeek] = useState(weeks[weeks.length - 1]?.weekId || '');
@@ -195,22 +239,19 @@
           console.log('Firebase 연결 타임아웃');
         }, 5000);
 
+        // Teams 데이터 리스너 (먼저 로드)
+        const teamsRef = db.ref('teams');
+        teamsRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) setFirebaseTeams(data);
+        }, (error) => console.error('teams 로드 오류:', error));
+
         // 업로드 상태 리스너
         const uploadRef = db.ref('uploadStatus');
         uploadRef.on('value', (snapshot) => {
           clearTimeout(timeout);
           const data = snapshot.val();
-          if (data) {
-            setUploadStatus(prev => {
-              const merged = generateEmptyUploadStatus();
-              Object.keys(data).forEach(member => {
-                if (merged[member]) {
-                  merged[member].weeks = data[member].weeks || {};
-                }
-              });
-              return merged;
-            });
-          }
+          setUploadStatus(data || {});
           setIsLoading(false);
         }, (error) => {
           clearTimeout(timeout);
@@ -244,6 +285,7 @@
 
         return () => {
           clearTimeout(timeout);
+          teamsRef.off();
           uploadRef.off();
           scoresRef.off();
           growthdayRef.off();
@@ -396,7 +438,7 @@
         );
       }
 
-      if (!loggedInUser) return <LoginScreen onLogin={handleLogin} />;
+      if (!loggedInUser) return <LoginScreen onLogin={handleLogin} teamsData={activeTeamsData} teamColors={activeTeamColors} />;
 
       return (
         <div style={styles.container}>
@@ -484,7 +526,7 @@
                 <span style={styles.logoText}>그로스보드</span>
               </div>
               <div style={styles.userSection}>
-                <div style={styles.userAvatar} style={{...styles.userAvatar, backgroundColor: TEAM_COLORS[loggedInUser.team]}}>
+                <div style={styles.userAvatar} style={{...styles.userAvatar, backgroundColor: activeTeamColors[loggedInUser.team] || '#3182F6'}}>
                   {loggedInUser.name[0]}
                 </div>
                 <button style={styles.logoutBtn} onClick={handleLogout}>로그아웃</button>
@@ -530,6 +572,7 @@
                 weeks={weeks}
                 onCheck={handleUploadCheck}
                 userTeam={loggedInUser.team}
+                teamColors={activeTeamColors}
               />
             )}
             {currentPage === 'growth' && growthdayActive && growthdayQuarter && (
@@ -539,6 +582,9 @@
                 quarter={growthdayQuarter}
                 onScore={handleScoreSubmit}
                 isCEO={isCEO}
+                teamsData={activeTeamsData}
+                teamColors={activeTeamColors}
+                regularMembers={regularMembers}
               />
             )}
             {currentPage === 'upload' && isCEO && (
@@ -562,14 +608,14 @@
       );
     }
 
-    function LoginScreen({ onLogin }) {
+    function LoginScreen({ onLogin, teamsData, teamColors }) {
       const [step, setStep] = useState(1);
       const [selectedTeam, setSelectedTeam] = useState(null);
       const [searchTerm, setSearchTerm] = useState('');
 
-      const teams = Object.keys(TEAMS_DATA);
+      const teams = Object.keys(teamsData);
       const filteredTeams = teams.filter(team => team.toLowerCase().includes(searchTerm.toLowerCase()));
-      const filteredMembers = selectedTeam ? TEAMS_DATA[selectedTeam].filter(name => name.includes(searchTerm)) : [];
+      const filteredMembers = selectedTeam ? (teamsData[selectedTeam] || []).filter(name => name.includes(searchTerm)) : [];
 
       return (
         <div style={styles.loginScreen}>
@@ -607,9 +653,9 @@
               <div style={styles.listContainer}>
                 {filteredTeams.map(team => (
                   <button key={team} style={styles.listItem} onClick={() => { setSelectedTeam(team); setStep(2); setSearchTerm(''); }}>
-                    <div style={{...styles.teamDot, backgroundColor: TEAM_COLORS[team]}} />
+                    <div style={{...styles.teamDot, backgroundColor: teamColors[team] || '#3182F6'}} />
                     <span style={styles.listItemText}>{team}</span>
-                    <span style={styles.listItemCount}>{TEAMS_DATA[team].length}명</span>
+                    <span style={styles.listItemCount}>{(teamsData[team] || []).length}명</span>
                   </button>
                 ))}
               </div>
@@ -621,7 +667,7 @@
                 <div style={styles.listContainer}>
                   {filteredMembers.map(name => (
                     <button key={name} style={styles.listItem} onClick={() => onLogin(selectedTeam, name)}>
-                      <div style={{...styles.nameAvatar, backgroundColor: TEAM_COLORS[selectedTeam]}}>{name[0]}</div>
+                      <div style={{...styles.nameAvatar, backgroundColor: teamColors[selectedTeam] || '#3182F6'}}>{name[0]}</div>
                       <span style={styles.listItemText}>{name}</span>
                       {selectedTeam === "대표이사실" && <span style={styles.ceoBadge}>대표</span>}
                     </button>
@@ -634,7 +680,7 @@
       );
     }
 
-    function UploadCheckPage({ currentUser, uploadStatus, selectedWeek, setSelectedWeek, weeks, onCheck, userTeam }) {
+    function UploadCheckPage({ currentUser, uploadStatus, selectedWeek, setSelectedWeek, weeks, onCheck, userTeam, teamColors }) {
       const userStatus = uploadStatus[currentUser];
       const isChecked = userStatus?.weeks?.[selectedWeek];
       const selectedWeekInfo = weeks.find(w => w.weekId === selectedWeek);
@@ -660,7 +706,7 @@
           <div style={styles.checkCard}>
             <div style={styles.checkHeader}>
               <div style={styles.checkUser}>
-                <div style={{...styles.checkAvatar, backgroundColor: TEAM_COLORS[userTeam]}}>{currentUser[0]}</div>
+                <div style={{...styles.checkAvatar, backgroundColor: teamColors[userTeam] || '#3182F6'}}>{currentUser[0]}</div>
                 <div>
                   <div style={styles.checkName}>{currentUser}</div>
                   <div style={styles.checkTeam}>{userTeam}</div>
@@ -719,7 +765,7 @@
       );
     }
 
-    function GrowthDayPage({ currentUser, scores, quarter, onScore, isCEO }) {
+    function GrowthDayPage({ currentUser, scores, quarter, onScore, isCEO, teamsData, teamColors, regularMembers }) {
       const [selectedPresenter, setSelectedPresenter] = useState(null);
       const [criteriaScores, setCriteriaScores] = useState({});
       const [searchTerm, setSearchTerm] = useState('');
@@ -727,10 +773,10 @@
 
       const scoreMultiplier = isCEO ? 2 : 1;
       const maxTotalScore = 100 * scoreMultiplier;
-      const availablePresenters = REGULAR_MEMBERS.filter(m => m !== currentUser);
+      const availablePresenters = regularMembers.filter(m => m !== currentUser);
 
       const getMemberTeam = (name) => {
-        for (const [team, members] of Object.entries(TEAMS_DATA)) {
+        for (const [team, members] of Object.entries(teamsData)) {
           if (members.includes(name)) return team;
         }
         return '';
@@ -815,7 +861,7 @@
                 {Object.entries(groupedPresenters).map(([team, members]) => (
                   <div key={team} style={styles.teamGroup}>
                     <div style={styles.teamHeader}>
-                      <div style={{...styles.teamDot, backgroundColor: TEAM_COLORS[team]}} />
+                      <div style={{...styles.teamDot, backgroundColor: teamColors[team] || '#3182F6'}} />
                       <span>{team}</span>
                     </div>
                     {members.map(name => {
@@ -826,7 +872,7 @@
                           style={{...styles.presenterItem, ...(voted ? styles.presenterItemVoted : {})}}
                           onClick={() => handleSelectPresenter(name, false)}
                         >
-                          <div style={{...styles.presenterAvatar, backgroundColor: TEAM_COLORS[team]}}>{name[0]}</div>
+                          <div style={{...styles.presenterAvatar, backgroundColor: teamColors[team] || '#3182F6'}}>{name[0]}</div>
                           <span style={styles.presenterName}>{name}</span>
                           {voted && <span style={styles.votedBadge}>✓ {getMyScore(name)}점</span>}
                         </button>
@@ -842,7 +888,7 @@
             <div style={styles.scoringCard}>
               <div style={styles.scoringHeader}>
                 <div style={styles.scoringPresenter}>
-                  <div style={{...styles.scoringAvatar, backgroundColor: TEAM_COLORS[getMemberTeam(selectedPresenter)]}}>{selectedPresenter[0]}</div>
+                  <div style={{...styles.scoringAvatar, backgroundColor: teamColors[getMemberTeam(selectedPresenter)] || '#3182F6'}}>{selectedPresenter[0]}</div>
                   <div>
                     <div style={styles.scoringName}>{selectedPresenter}</div>
                     <div style={styles.scoringTeam}>{getMemberTeam(selectedPresenter)}</div>
@@ -916,7 +962,7 @@
                     style={styles.myScoreItem}
                     onClick={() => handleSelectPresenter(presenter, true)}
                   >
-                    <div style={{...styles.myScoreAvatar, backgroundColor: TEAM_COLORS[getMemberTeam(presenter)]}}>{presenter[0]}</div>
+                    <div style={{...styles.myScoreAvatar, backgroundColor: teamColors[getMemberTeam(presenter)] || '#3182F6'}}>{presenter[0]}</div>
                     <div style={styles.myScoreInfo}>
                       <span style={styles.myScoreName}>{presenter}</span>
                       <span style={styles.myScoreTeam}>{getMemberTeam(presenter)}</span>
