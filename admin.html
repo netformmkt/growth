@@ -11,6 +11,7 @@
   <script src="https://www.gstatic.com/firebasejs/10.7.0/firebase-database-compat.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -45,19 +46,19 @@
       "경영관리팀": ["신나영", "주유진", "김유림"],
       "그로스팀": ["이재훈", "김범석"],
       "영업본부": ["황윤선"],
-      "서비스운영1팀": ["한준엽", "조재연", "정정훈", "김성민", "한지혜"],
-      "서비스운영2팀": ["권정아", "김수진"],
+      "서비스운영1팀": ["한준엽", "조재연", "정정훈", "김성민", "김경미"],
+      "서비스운영2팀": ["권정아", "김수진", "이지연"],
       "서비스운영3팀": ["주현진", "송보람"],
       "아파트스퀘어팀": ["한인규"],
-      "적산팀": ["김영성", "신수진"],
+      "적산팀": ["김영성", "신수진", "정태윤"],
       "설계/적산팀": ["조현식"],
       "기술연구소": ["신명희", "심혜진", "김소정"],
-      "브랜드마케팅팀": ["권혜영", "함지민", "김소라", "손예진", "최경선"],
+      "브랜드마케팅팀": ["권혜영", "함지민", "김소라", "최경선"],
       "커머스사업본부": ["허지은"],
-      "브랜드커머스팀": ["이란", "김민지"],
-      "미디어커머스팀": ["방현수", "김소연", "남윤정"],
+      "브랜드커머스팀": ["이란"],
+      "미디어커머스팀": ["김소연", "이채은", "남윤정"],
       "해외사업팀": ["김채원", "쩐티리"],
-      "모여라딜팀": ["김송희", "이채은"]
+      "모여라딜팀": ["김송희"]
     };
 
     // 본부별 색상 통일
@@ -315,7 +316,8 @@
               <div style={styles.logo}><span style={styles.logoText}>그로스보드</span><span style={styles.adminBadge}>Admin</span></div>
               <nav style={styles.nav}>
                 <button style={{...styles.navButton, ...(currentTab === 'dashboard' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('dashboard')}>대시보드</button>
-                <button style={{...styles.navButton, ...(currentTab === 'members' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('members')}>인원 관리</button>
+                <button style={{...styles.navButton, ...(currentTab === 'members' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('members')}>업로드 현황</button>
+                <button style={{...styles.navButton, ...(currentTab === 'teamSettings' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('teamSettings')}>팀 설정</button>
                 <button style={{...styles.navButton, ...(currentTab === 'growthday' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('growthday')}>그로스데이 관리</button>
               </nav>
               <button style={styles.logoutBtn} onClick={() => setIsLoggedIn(false)}>로그아웃</button>
@@ -324,6 +326,7 @@
           <main style={styles.main}>
             {currentTab === 'dashboard' && <DashboardTab stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} onMissingClick={() => setShowMissingModal(true)} uploadStatus={uploadStatus} />}
             {currentTab === 'members' && <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} pins={pins} onPinReset={handlePinReset} onPinResetAll={handlePinResetAll} />}
+            {currentTab === 'teamSettings' && <TeamSettingsTab showToast={showToast} />}
             {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} scores={scores} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} onDeleteScore={handleDeleteScore} onUpdateScore={handleUpdateScore} />}
           </main>
         </div>
@@ -868,6 +871,267 @@
       );
     }
 
+    // 팀 설정 탭 - Firebase 연동 인원 관리
+    function TeamSettingsTab({ showToast }) {
+      const [teamsData, setTeamsData] = useState(null);
+      const [excludedFromN8n, setExcludedFromN8n] = useState([]);
+      const [isLoading, setIsLoading] = useState(true);
+      const [selectedTeam, setSelectedTeam] = useState(null);
+      const [newMemberName, setNewMemberName] = useState('');
+      const [showAddTeamModal, setShowAddTeamModal] = useState(false);
+      const [newTeamName, setNewTeamName] = useState('');
+      const [newTeamColor, setNewTeamColor] = useState('#3182F6');
+
+      // Firebase에서 teams 데이터 로드
+      useEffect(() => {
+        if (!db) { setIsLoading(false); return; }
+        
+        const teamsRef = db.ref('teams');
+        const excludedRef = db.ref('excludedFromN8n');
+        
+        teamsRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setTeamsData(data);
+          setIsLoading(false);
+        });
+        
+        excludedRef.on('value', (snapshot) => {
+          const data = snapshot.val();
+          setExcludedFromN8n(data?.members || []);
+        });
+        
+        return () => {
+          teamsRef.off();
+          excludedRef.off();
+        };
+      }, []);
+
+      // 현재 하드코딩된 TEAMS_DATA를 Firebase에 초기화
+      const initializeTeamsData = () => {
+        if (!db) { showToast('Firebase 연결 필요'); return; }
+        if (!window.confirm('현재 팀 데이터를 Firebase에 저장하시겠습니까?\n기존 Firebase 데이터가 있다면 덮어씌워집니다.')) return;
+        
+        const teamsToSave = {};
+        Object.entries(TEAMS_DATA).forEach(([team, members]) => {
+          // Firebase 키에 / 사용 불가하므로 _로 변환
+          const safeKey = team.replace(/\//g, '_');
+          teamsToSave[safeKey] = { members, color: TEAM_COLORS[team] || '#3182F6', displayName: team };
+        });
+        
+        db.ref('teams').set(teamsToSave)
+          .then(() => {
+            // n8n 제외자도 저장
+            const excluded = ["백정석", "황윤선", "조현식", "허지은", "함지민", "김채원", "이승우", "이재훈", "김범석"];
+            return db.ref('excludedFromN8n').set({ members: excluded });
+          })
+          .then(() => showToast('팀 데이터가 Firebase에 저장되었습니다'))
+          .catch((error) => { console.error('Firebase 저장 오류:', error); showToast('저장 실패'); });
+      };
+
+      // 인원 추가
+      const addMember = (teamKey) => {
+        if (!db || !newMemberName.trim()) return;
+        const currentMembers = teamsData[teamKey]?.members || [];
+        if (currentMembers.includes(newMemberName.trim())) {
+          showToast('이미 존재하는 인원입니다');
+          return;
+        }
+        const updatedMembers = [...currentMembers, newMemberName.trim()];
+        const teamDisplayName = teamsData[teamKey]?.displayName || teamKey;
+        db.ref(`teams/${teamKey}/members`).set(updatedMembers)
+          .then(() => { showToast(`${newMemberName}님이 ${teamDisplayName}에 추가되었습니다`); setNewMemberName(''); })
+          .catch((error) => { console.error('추가 오류:', error); showToast('추가 실패'); });
+      };
+
+      // 인원 삭제
+      const removeMember = (teamKey, memberName) => {
+        if (!db) return;
+        const teamDisplayName = teamsData[teamKey]?.displayName || teamKey;
+        if (!window.confirm(`${memberName}님을 ${teamDisplayName}에서 삭제하시겠습니까?`)) return;
+        const currentMembers = teamsData[teamKey]?.members || [];
+        const updatedMembers = currentMembers.filter(m => m !== memberName);
+        db.ref(`teams/${teamKey}/members`).set(updatedMembers)
+          .then(() => showToast(`${memberName}님이 삭제되었습니다`))
+          .catch((error) => { console.error('삭제 오류:', error); showToast('삭제 실패'); });
+      };
+
+      // n8n 알림 제외 토글
+      const toggleN8nExclude = (memberName) => {
+        if (!db) return;
+        let updated;
+        if (excludedFromN8n.includes(memberName)) {
+          updated = excludedFromN8n.filter(m => m !== memberName);
+        } else {
+          updated = [...excludedFromN8n, memberName];
+        }
+        db.ref('excludedFromN8n/members').set(updated)
+          .then(() => showToast(`${memberName}님 n8n 알림 ${updated.includes(memberName) ? '제외' : '포함'} 설정됨`))
+          .catch((error) => { console.error('설정 오류:', error); showToast('설정 실패'); });
+      };
+
+      // 팀 추가
+      const addTeam = () => {
+        if (!db || !newTeamName.trim()) return;
+        if (teamsData && teamsData[newTeamName.trim()]) {
+          showToast('이미 존재하는 팀입니다');
+          return;
+        }
+        db.ref(`teams/${newTeamName.trim()}`).set({ members: [], color: newTeamColor })
+          .then(() => { showToast(`${newTeamName} 팀이 추가되었습니다`); setNewTeamName(''); setShowAddTeamModal(false); })
+          .catch((error) => { console.error('팀 추가 오류:', error); showToast('팀 추가 실패'); });
+      };
+
+      // 팀 삭제
+      const removeTeam = (teamName) => {
+        if (!db) return;
+        if (!window.confirm(`${teamName} 팀을 삭제하시겠습니까?\n팀의 모든 인원도 함께 삭제됩니다.`)) return;
+        db.ref(`teams/${teamName}`).remove()
+          .then(() => { showToast(`${teamName} 팀이 삭제되었습니다`); setSelectedTeam(null); })
+          .catch((error) => { console.error('팀 삭제 오류:', error); showToast('팀 삭제 실패'); });
+      };
+
+      if (isLoading) return <div style={{padding: '40px', textAlign: 'center', color: '#666'}}>로딩 중...</div>;
+
+      // Firebase에 데이터가 없으면 초기화 화면
+      if (!teamsData) {
+        return (
+          <div style={styles.page}>
+            <div style={styles.pageHeader}>
+              <h1 style={styles.pageTitle}>팀 설정</h1>
+              <p style={styles.pageSubtitle}>팀 및 인원을 관리하세요</p>
+            </div>
+            <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '40px', textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)'}}>
+              <div style={{fontSize: '48px', marginBottom: '16px'}}>📋</div>
+              <h3 style={{fontSize: '18px', fontWeight: '600', color: '#191F28', marginBottom: '8px'}}>Firebase에 팀 데이터가 없습니다</h3>
+              <p style={{fontSize: '14px', color: '#666', marginBottom: '24px'}}>현재 설정된 팀 데이터를 Firebase에 저장하면<br/>이후 인원 추가/삭제가 자동 반영됩니다.</p>
+              <button onClick={initializeTeamsData} style={{padding: '14px 28px', border: 'none', backgroundColor: '#3182F6', borderRadius: '10px', fontSize: '15px', fontWeight: '600', color: '#FFF', cursor: 'pointer'}}>
+                팀 데이터 초기화
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      const teamsList = Object.entries(teamsData).sort((a, b) => {
+        const nameA = a[1].displayName || a[0];
+        const nameB = b[1].displayName || b[0];
+        return nameA.localeCompare(nameB);
+      });
+      const selectedTeamData = selectedTeam ? teamsData[selectedTeam] : null;
+      const selectedTeamDisplayName = selectedTeamData?.displayName || selectedTeam;
+
+      return (
+        <div style={styles.page}>
+          <div style={styles.pageHeader}>
+            <h1 style={styles.pageTitle}>팀 설정</h1>
+            <p style={styles.pageSubtitle}>팀 및 인원을 관리하세요. 변경사항은 자동으로 저장됩니다.</p>
+          </div>
+
+          {/* 안내 배너 */}
+          <div style={{backgroundColor: '#E8F3FF', borderRadius: '12px', padding: '16px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px'}}>
+            <span style={{fontSize: '20px'}}>💡</span>
+            <div>
+              <div style={{fontSize: '14px', fontWeight: '600', color: '#3182F6'}}>인원 변경 자동 반영</div>
+              <div style={{fontSize: '13px', color: '#666'}}>여기서 인원을 추가/삭제하면 employee 페이지와 n8n 알림에 자동 반영됩니다.</div>
+            </div>
+          </div>
+
+          <div style={{display: 'grid', gridTemplateColumns: '300px 1fr', gap: '24px'}}>
+            {/* 왼쪽: 팀 목록 */}
+            <div>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                <h3 style={{fontSize: '16px', fontWeight: '600', color: '#191F28'}}>팀 목록</h3>
+                <button onClick={() => setShowAddTeamModal(true)} style={{padding: '6px 12px', border: '1px solid #3182F6', backgroundColor: '#E8F3FF', borderRadius: '6px', fontSize: '13px', fontWeight: '600', color: '#3182F6', cursor: 'pointer'}}>+ 팀 추가</button>
+              </div>
+              <div style={{backgroundColor: '#FFF', borderRadius: '12px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', overflow: 'hidden'}}>
+                {teamsList.map(([teamKey, teamData]) => {
+                  const teamDisplayName = teamData.displayName || teamKey;
+                  return (
+                  <div key={teamKey} onClick={() => setSelectedTeam(teamKey)} style={{padding: '14px 16px', borderBottom: '1px solid #F4F4F4', cursor: 'pointer', backgroundColor: selectedTeam === teamKey ? '#F7F8FA' : '#FFF', display: 'flex', alignItems: 'center', gap: '10px'}}>
+                    <div style={{width: '10px', height: '10px', borderRadius: '50%', backgroundColor: teamData.color || '#3182F6'}}></div>
+                    <span style={{flex: 1, fontSize: '14px', fontWeight: selectedTeam === teamKey ? '600' : '500', color: '#191F28'}}>{teamDisplayName}</span>
+                    <span style={{fontSize: '13px', color: '#666'}}>{teamData.members?.length || 0}명</span>
+                  </div>
+                );})}
+              </div>
+            </div>
+
+            {/* 오른쪽: 선택된 팀 상세 */}
+            <div>
+              {selectedTeam ? (
+                <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '24px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)'}}>
+                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '16px', borderBottom: '1px solid #F4F4F4'}}>
+                    <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                      <div style={{width: '16px', height: '16px', borderRadius: '50%', backgroundColor: selectedTeamData?.color || '#3182F6'}}></div>
+                      <h3 style={{fontSize: '18px', fontWeight: '700', color: '#191F28'}}>{selectedTeamDisplayName}</h3>
+                      <span style={{padding: '4px 10px', backgroundColor: '#F7F8FA', borderRadius: '6px', fontSize: '13px', color: '#666'}}>{selectedTeamData?.members?.length || 0}명</span>
+                    </div>
+                    <button onClick={() => removeTeam(selectedTeam)} style={{padding: '8px 14px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '8px', fontSize: '13px', fontWeight: '600', color: '#E54545', cursor: 'pointer'}}>팀 삭제</button>
+                  </div>
+
+                  {/* 인원 추가 */}
+                  <div style={{display: 'flex', gap: '8px', marginBottom: '20px'}}>
+                    <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} onKeyPress={e => e.key === 'Enter' && addMember(selectedTeam)} placeholder="새 인원 이름" style={{flex: 1, padding: '12px 16px', border: '1px solid #E5E5E5', borderRadius: '10px', fontSize: '14px'}} />
+                    <button onClick={() => addMember(selectedTeam)} style={{padding: '12px 20px', border: 'none', backgroundColor: '#3182F6', borderRadius: '10px', fontSize: '14px', fontWeight: '600', color: '#FFF', cursor: 'pointer'}}>추가</button>
+                  </div>
+
+                  {/* 인원 목록 */}
+                  <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                    {selectedTeamData?.members?.length > 0 ? selectedTeamData.members.map(member => (
+                      <div key={member} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', backgroundColor: '#F7F8FA', borderRadius: '10px'}}>
+                        <span style={{fontSize: '14px', fontWeight: '500', color: '#191F28'}}>{member}</span>
+                        <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
+                          <label style={{display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'}}>
+                            <input type="checkbox" checked={excludedFromN8n.includes(member)} onChange={() => toggleN8nExclude(member)} style={{width: '16px', height: '16px'}} />
+                            <span style={{fontSize: '12px', color: excludedFromN8n.includes(member) ? '#E54545' : '#666'}}>n8n 제외</span>
+                          </label>
+                          <button onClick={() => removeMember(selectedTeam, member)} style={{padding: '6px 12px', border: '1px solid #E54545', backgroundColor: '#FEF1F1', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: '#E54545', cursor: 'pointer'}}>삭제</button>
+                        </div>
+                      </div>
+                    )) : <div style={{padding: '20px', textAlign: 'center', color: '#999'}}>인원이 없습니다</div>}
+                  </div>
+                </div>
+              ) : (
+                <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '64px', textAlign: 'center', boxShadow: '0 2px 10px rgba(0,0,0,0.05)'}}>
+                  <div style={{fontSize: '36px', marginBottom: '12px'}}>👈</div>
+                  <div style={{fontSize: '15px', color: '#666'}}>왼쪽에서 팀을 선택하세요</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* n8n 제외 인원 요약 */}
+          <div style={{marginTop: '24px', backgroundColor: '#FFF8DC', borderRadius: '12px', padding: '16px 20px'}}>
+            <div style={{fontSize: '14px', fontWeight: '600', color: '#8B6914', marginBottom: '8px'}}>📢 n8n 알림 제외 인원 ({excludedFromN8n.length}명)</div>
+            <div style={{fontSize: '13px', color: '#8B6914'}}>{excludedFromN8n.length > 0 ? excludedFromN8n.join(', ') : '없음'}</div>
+          </div>
+
+          {/* 팀 추가 모달 */}
+          {showAddTeamModal && (
+            <div style={styles.modalOverlay} onClick={() => setShowAddTeamModal(false)}>
+              <div style={{...styles.modal, maxWidth: '400px'}} onClick={e => e.stopPropagation()}>
+                <div style={styles.modalHeader}><h3 style={styles.modalTitle}>새 팀 추가</h3><button style={styles.modalClose} onClick={() => setShowAddTeamModal(false)}>✕</button></div>
+                <div style={{marginTop: '20px'}}>
+                  <div style={{marginBottom: '16px'}}>
+                    <label style={{display: 'block', fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '8px'}}>팀 이름</label>
+                    <input type="text" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} placeholder="예: 신규사업팀" style={{width: '100%', padding: '12px 16px', border: '1px solid #E5E5E5', borderRadius: '10px', fontSize: '14px'}} />
+                  </div>
+                  <div style={{marginBottom: '16px'}}>
+                    <label style={{display: 'block', fontSize: '14px', fontWeight: '600', color: '#333', marginBottom: '8px'}}>팀 색상</label>
+                    <input type="color" value={newTeamColor} onChange={e => setNewTeamColor(e.target.value)} style={{width: '100%', height: '44px', border: 'none', borderRadius: '10px', cursor: 'pointer'}} />
+                  </div>
+                </div>
+                <div style={styles.modalActions}>
+                  <button style={styles.cancelBtn} onClick={() => setShowAddTeamModal(false)}>취소</button>
+                  <button style={styles.confirmBtn} onClick={addTeam}>추가</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function GrowthdayTab({ growthdayActive, growthdayQuarter, growthdayStats, scores, onStartClick, onStop, onDeleteScore, onUpdateScore }) {
       const [selectedPresenter, setSelectedPresenter] = useState(null);
       const [isExporting, setIsExporting] = useState(false);
@@ -1083,6 +1347,74 @@
         }
       };
 
+      const exportToExcel = () => {
+        if (!selectedViewQuarter || viewStats.length === 0) {
+          alert('내보낼 데이터가 없습니다.');
+          return;
+        }
+
+        const quarterScores = scores[selectedViewQuarter] || {};
+        const excelData = [];
+
+        // 헤더 추가
+        excelData.push(['발표자', '발표자 팀', '평가자', '평가자 팀', 'CEO 여부', '목표와 성과 (30점)', '개인 성장 (20점)', '학습/실패 공유 (20점)', '협업과 기여 (15점)', '발표력 (15점)', '총점 (기본)', '총점 (가중)']);
+
+        // 각 발표자별 데이터 추가
+        Object.entries(quarterScores).forEach(([presenter, voters]) => {
+          const presenterTeam = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(presenter))?.[0] || '';
+
+          Object.entries(voters).forEach(([voter, data]) => {
+            const voterTeam = Object.entries(TEAMS_DATA).find(([t, members]) => members.includes(voter))?.[0] || '';
+            const scores = data.scores || {};
+            const baseScore = Object.values(scores).reduce((a, b) => a + b, 0);
+            const finalScore = data.isCEO ? baseScore * 2 : baseScore;
+
+            excelData.push([
+              presenter,
+              presenterTeam,
+              voter,
+              voterTeam,
+              data.isCEO ? 'O' : 'X',
+              scores.goal || 0,
+              scores.growth || 0,
+              scores.learning || 0,
+              scores.collaboration || 0,
+              scores.presentation || 0,
+              baseScore,
+              finalScore
+            ]);
+          });
+        });
+
+        // 엑셀 파일 생성
+        const ws = window.XLSX.utils.aoa_to_sheet(excelData);
+
+        // 열 너비 설정
+        ws['!cols'] = [
+          { wch: 12 }, // 발표자
+          { wch: 18 }, // 발표자 팀
+          { wch: 12 }, // 평가자
+          { wch: 18 }, // 평가자 팀
+          { wch: 10 }, // CEO 여부
+          { wch: 18 }, // 목표와 성과
+          { wch: 16 }, // 개인 성장
+          { wch: 18 }, // 학습/실패 공유
+          { wch: 16 }, // 협업과 기여
+          { wch: 12 }, // 발표력
+          { wch: 14 }, // 총점 (기본)
+          { wch: 14 }  // 총점 (가중)
+        ];
+
+        const wb = window.XLSX.utils.book_new();
+        window.XLSX.utils.book_append_sheet(wb, ws, '로우데이터');
+
+        const today = new Date();
+        const dateStr = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+        const fileName = '그로스데이_로우데이터_' + selectedViewQuarter.replace(/\s/g, '_') + '_' + dateStr + '.xlsx';
+
+        window.XLSX.writeFile(wb, fileName);
+      };
+
       return (
         <div style={styles.page}>
           <div style={styles.pageHeader}><h1 style={styles.pageTitle}>그로스데이 관리</h1><p style={styles.pageSubtitle}>그로스데이 활성화 및 점수 현황을 관리하세요</p></div>
@@ -1112,7 +1444,12 @@
                 </select>
                 <span style={styles.scoreCount}>{viewStats.length}명 발표</span>
               </div>
-              {viewStats.length > 0 && <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>}
+              {viewStats.length > 0 && (
+                <div style={{display: 'flex', gap: '12px'}}>
+                  <button style={{...styles.pdfExportBtn, opacity: isExporting ? 0.6 : 1}} onClick={exportToPDF} disabled={isExporting}>{isExporting ? '⏳ 생성 중...' : '📄 PDF 내보내기'}</button>
+                  <button style={styles.pdfExportBtn} onClick={exportToExcel}>📊 로우데이터 내보내기</button>
+                </div>
+              )}
             </div>
             {allQuarters.length === 0 ? (
               <div style={styles.emptyState}>아직 배점된 데이터가 없습니다</div>
