@@ -955,6 +955,23 @@
           .catch((error) => { console.error('삭제 오류:', error); showToast('삭제 실패'); });
       };
 
+      // 인원 순서 변경 (위로/아래로)
+      const moveMember = (teamKey, memberName, direction) => {
+        if (!db) return;
+        const currentMembers = [...(teamsData[teamKey]?.members || [])];
+        const currentIndex = currentMembers.indexOf(memberName);
+        if (currentIndex === -1) return;
+        
+        const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+        if (newIndex < 0 || newIndex >= currentMembers.length) return;
+        
+        // 위치 교환
+        [currentMembers[currentIndex], currentMembers[newIndex]] = [currentMembers[newIndex], currentMembers[currentIndex]];
+        
+        db.ref(`teams/${teamKey}/members`).set(currentMembers)
+          .catch((error) => { console.error('순서 변경 오류:', error); showToast('순서 변경 실패'); });
+      };
+
       // n8n 알림 제외 토글
       const toggleN8nExclude = (memberName) => {
         if (!db) return;
@@ -1077,9 +1094,23 @@
 
                   {/* 인원 목록 */}
                   <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
-                    {selectedTeamData?.members?.length > 0 ? selectedTeamData.members.map(member => (
+                    {selectedTeamData?.members?.length > 0 ? selectedTeamData.members.map((member, index) => (
                       <div key={member} style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', backgroundColor: '#F7F8FA', borderRadius: '10px'}}>
-                        <span style={{fontSize: '14px', fontWeight: '500', color: '#191F28'}}>{member}</span>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                          <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
+                            <button 
+                              onClick={() => moveMember(selectedTeam, member, 'up')} 
+                              disabled={index === 0}
+                              style={{padding: '2px 6px', border: '1px solid #E5E5E5', backgroundColor: index === 0 ? '#F4F4F4' : '#FFF', borderRadius: '4px', fontSize: '10px', cursor: index === 0 ? 'not-allowed' : 'pointer', color: index === 0 ? '#CCC' : '#666'}}
+                            >▲</button>
+                            <button 
+                              onClick={() => moveMember(selectedTeam, member, 'down')} 
+                              disabled={index === selectedTeamData.members.length - 1}
+                              style={{padding: '2px 6px', border: '1px solid #E5E5E5', backgroundColor: index === selectedTeamData.members.length - 1 ? '#F4F4F4' : '#FFF', borderRadius: '4px', fontSize: '10px', cursor: index === selectedTeamData.members.length - 1 ? 'not-allowed' : 'pointer', color: index === selectedTeamData.members.length - 1 ? '#CCC' : '#666'}}
+                            >▼</button>
+                          </div>
+                          <span style={{fontSize: '14px', fontWeight: '500', color: '#191F28'}}>{member}</span>
+                        </div>
                         <div style={{display: 'flex', gap: '8px', alignItems: 'center'}}>
                           <label style={{display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer'}}>
                             <input type="checkbox" checked={excludedFromN8n.includes(member)} onChange={() => toggleN8nExclude(member)} style={{width: '16px', height: '16px'}} />
