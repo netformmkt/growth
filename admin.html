@@ -317,6 +317,7 @@
               <nav style={styles.nav}>
                 <button style={{...styles.navButton, ...(currentTab === 'dashboard' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('dashboard')}>대시보드</button>
                 <button style={{...styles.navButton, ...(currentTab === 'members' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('members')}>업로드 현황</button>
+                <button style={{...styles.navButton, ...(currentTab === 'uploadAnalysis' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('uploadAnalysis')}>업로드 분석</button>
                 <button style={{...styles.navButton, ...(currentTab === 'teamSettings' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('teamSettings')}>팀 설정</button>
                 <button style={{...styles.navButton, ...(currentTab === 'growthday' ? styles.navButtonActive : {})}} onClick={() => setCurrentTab('growthday')}>그로스데이 관리</button>
               </nav>
@@ -326,6 +327,7 @@
           <main style={styles.main}>
             {currentTab === 'dashboard' && <DashboardTab stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} onMissingClick={() => setShowMissingModal(true)} uploadStatus={uploadStatus} />}
             {currentTab === 'members' && <MembersTab uploadStatus={uploadStatus} stats={stats} selectedWeek={selectedWeek} setSelectedWeek={setSelectedWeek} onToggle={handleUploadToggle} selectedTeamFilter={selectedTeamFilter} setSelectedTeamFilter={setSelectedTeamFilter} pins={pins} onPinReset={handlePinReset} onPinResetAll={handlePinResetAll} />}
+            {currentTab === 'uploadAnalysis' && <UploadAnalysisTab uploadStatus={uploadStatus} />}
             {currentTab === 'teamSettings' && <TeamSettingsTab showToast={showToast} />}
             {currentTab === 'growthday' && <GrowthdayTab growthdayActive={growthdayActive} growthdayQuarter={growthdayQuarter} growthdayStats={growthdayStats} scores={scores} onStartClick={() => setShowGrowthdayModal(true)} onStop={handleGrowthdayStop} onDeleteScore={handleDeleteScore} onUpdateScore={handleUpdateScore} />}
           </main>
@@ -867,6 +869,350 @@
               </>
             )}
           </div>
+        </div>
+      );
+    }
+
+    // 업로드 분석 탭
+    function UploadAnalysisTab({ uploadStatus }) {
+      const [selectedTeams, setSelectedTeams] = useState([]);
+      const [selectedMembers, setSelectedMembers] = useState([]);
+      const [startDate, setStartDate] = useState('');
+      const [endDate, setEndDate] = useState('');
+      const [analysisResult, setAnalysisResult] = useState(null);
+      const [teamsData, setTeamsData] = useState(null);
+
+      // Firebase에서 teams 데이터 로드
+      useEffect(() => {
+        if (!db) return;
+        db.ref('teams').on('value', (snapshot) => {
+          const data = snapshot.val();
+          if (data) setTeamsData(data);
+        });
+        return () => db.ref('teams').off();
+      }, []);
+
+      // 팀 목록 (대표이사실 제외)
+      const teamList = teamsData ? Object.entries(teamsData)
+        .filter(([key]) => key !== '대표이사실')
+        .map(([key, data]) => ({ key, name: data.displayName || key, members: data.members || [], color: data.color || '#666' }))
+        .sort((a, b) => a.name.localeCompare(b.name, 'ko')) : [];
+
+      // 선택된 팀의 멤버 목록
+      const availableMembers = selectedTeams.length > 0
+        ? teamList.filter(t => selectedTeams.includes(t.key)).flatMap(t => t.members.map(m => ({ name: m, team: t.name, teamKey: t.key })))
+        : teamList.flatMap(t => t.members.map(m => ({ name: m, team: t.name, teamKey: t.key })));
+
+      // 팀 선택 토글
+      const toggleTeam = (teamKey) => {
+        setSelectedTeams(prev => 
+          prev.includes(teamKey) ? prev.filter(t => t !== teamKey) : [...prev, teamKey]
+        );
+        setSelectedMembers([]); // 팀 변경 시 멤버 선택 초기화
+      };
+
+      // 멤버 선택 토글
+      const toggleMember = (memberName) => {
+        setSelectedMembers(prev => 
+          prev.includes(memberName) ? prev.filter(m => m !== memberName) : [...prev, memberName]
+        );
+      };
+
+      // 전체 팀 선택/해제
+      const toggleAllTeams = () => {
+        if (selectedTeams.length === teamList.length) {
+          setSelectedTeams([]);
+        } else {
+          setSelectedTeams(teamList.map(t => t.key));
+        }
+        setSelectedMembers([]);
+      };
+
+      // 전체 멤버 선택/해제
+      const toggleAllMembers = () => {
+        if (selectedMembers.length === availableMembers.length) {
+          setSelectedMembers([]);
+        } else {
+          setSelectedMembers(availableMembers.map(m => m.name));
+        }
+      };
+
+      // 주차 키 생성 (날짜 -> "2026-01-05" 형식 - 해당 주 월요일)
+      const getWeekKey = (date) => {
+        const d = new Date(date);
+        const dayOfWeek = d.getDay();
+        const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - daysSinceMonday);
+        return monday.getFullYear() + '-' + String(monday.getMonth()+1).padStart(2,'0') + '-' + String(monday.getDate()).padStart(2,'0');
+      };
+
+      // 기간 내 주차 목록 생성
+      const getWeeksInRange = (start, end) => {
+        const weeks = [];
+        const current = new Date(start);
+        const endDate = new Date(end);
+        
+        // 시작일을 해당 주의 월요일로 조정
+        const dayOfWeek = current.getDay();
+        const daysSinceMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        current.setDate(current.getDate() - daysSinceMonday);
+        
+        while (current <= endDate) {
+          weeks.push(getWeekKey(current));
+          current.setDate(current.getDate() + 7);
+        }
+        return [...new Set(weeks)];
+      };
+
+      // 분석 실행
+      const runAnalysis = () => {
+        if (!startDate || !endDate) {
+          alert('시작일과 종료일을 선택해주세요.');
+          return;
+        }
+        if (new Date(startDate) > new Date(endDate)) {
+          alert('시작일이 종료일보다 늦습니다.');
+          return;
+        }
+
+        const targetMembers = selectedMembers.length > 0 
+          ? availableMembers.filter(m => selectedMembers.includes(m.name))
+          : availableMembers;
+
+        if (targetMembers.length === 0) {
+          alert('분석할 인원을 선택해주세요.');
+          return;
+        }
+
+        const weeksInRange = getWeeksInRange(startDate, endDate);
+        const totalWeeks = weeksInRange.length;
+
+        const results = targetMembers.map(member => {
+          const memberData = uploadStatus[member.name];
+          let uploadedWeeks = 0;
+
+          if (memberData && memberData.weeks) {
+            weeksInRange.forEach(week => {
+              if (memberData.weeks[week] === true) {
+                uploadedWeeks++;
+              }
+            });
+          }
+
+          const percentage = totalWeeks > 0 ? Math.round((uploadedWeeks / totalWeeks) * 100) : 0;
+
+          return {
+            name: member.name,
+            team: member.team,
+            uploadedWeeks,
+            totalWeeks,
+            percentage
+          };
+        });
+
+        // 팀별 통계
+        const teamStats = {};
+        results.forEach(r => {
+          if (!teamStats[r.team]) {
+            teamStats[r.team] = { totalUploaded: 0, totalPossible: 0, members: [] };
+          }
+          teamStats[r.team].totalUploaded += r.uploadedWeeks;
+          teamStats[r.team].totalPossible += r.totalWeeks;
+          teamStats[r.team].members.push(r);
+        });
+
+        Object.keys(teamStats).forEach(team => {
+          teamStats[team].percentage = teamStats[team].totalPossible > 0 
+            ? Math.round((teamStats[team].totalUploaded / teamStats[team].totalPossible) * 100) 
+            : 0;
+        });
+
+        setAnalysisResult({ 
+          individual: results.sort((a, b) => b.percentage - a.percentage), 
+          byTeam: teamStats,
+          totalWeeks,
+          startDate,
+          endDate
+        });
+      };
+
+      // 결과 복사
+      const copyResults = () => {
+        if (!analysisResult) return;
+        
+        let text = `[업로드 분석 결과]\n기간: ${analysisResult.startDate} ~ ${analysisResult.endDate} (${analysisResult.totalWeeks}주)\n\n`;
+        
+        text += `▸ 팀별 현황\n`;
+        Object.entries(analysisResult.byTeam).forEach(([team, data]) => {
+          text += `  - ${team}: ${data.totalUploaded}/${data.totalPossible}주 (${data.percentage}%)\n`;
+        });
+        
+        text += `\n▸ 개인별 현황\n`;
+        analysisResult.individual.forEach(r => {
+          text += `  - ${r.name} (${r.team}): ${r.uploadedWeeks}/${r.totalWeeks}주 (${r.percentage}%)\n`;
+        });
+
+        navigator.clipboard.writeText(text).then(() => alert('결과가 복사되었습니다.'));
+      };
+
+      if (!teamsData) {
+        return (
+          <div style={{padding: '40px', textAlign: 'center'}}>
+            <div style={{fontSize: '24px', marginBottom: '12px'}}>⏳</div>
+            <div style={{color: '#666'}}>데이터 로딩 중...</div>
+          </div>
+        );
+      }
+
+      return (
+        <div style={{padding: '24px'}}>
+          <div style={{marginBottom: '24px'}}>
+            <h2 style={{fontSize: '22px', fontWeight: '700', color: '#191F28', marginBottom: '8px'}}>📊 업로드 분석</h2>
+            <p style={{fontSize: '14px', color: '#666'}}>팀/인원/기간별 업로드율을 분석합니다</p>
+          </div>
+
+          {/* 필터 영역 */}
+          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '24px'}}>
+            {/* 팀 선택 */}
+            <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '20px', border: '1px solid #E5E8EB'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                <h3 style={{fontSize: '15px', fontWeight: '700', color: '#191F28'}}>팀 선택</h3>
+                <button 
+                  onClick={toggleAllTeams}
+                  style={{padding: '6px 12px', border: '1px solid #3182F6', backgroundColor: selectedTeams.length === teamList.length ? '#3182F6' : '#FFF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: selectedTeams.length === teamList.length ? '#FFF' : '#3182F6', cursor: 'pointer'}}
+                >
+                  {selectedTeams.length === teamList.length ? '전체 해제' : '전체 선택'}
+                </button>
+              </div>
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: '8px', maxHeight: '150px', overflowY: 'auto'}}>
+                {teamList.map(team => (
+                  <label key={team.key} style={{display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 12px', backgroundColor: selectedTeams.includes(team.key) ? '#EBF4FF' : '#F7F8FA', borderRadius: '8px', cursor: 'pointer', border: selectedTeams.includes(team.key) ? '1px solid #3182F6' : '1px solid transparent'}}>
+                    <input type="checkbox" checked={selectedTeams.includes(team.key)} onChange={() => toggleTeam(team.key)} style={{display: 'none'}} />
+                    <span style={{width: '8px', height: '8px', borderRadius: '50%', backgroundColor: team.color}}></span>
+                    <span style={{fontSize: '13px', color: '#191F28'}}>{team.name}</span>
+                    <span style={{fontSize: '11px', color: '#999'}}>({team.members.length}명)</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{marginTop: '8px', fontSize: '12px', color: '#666'}}>
+                {selectedTeams.length > 0 ? `${selectedTeams.length}개 팀 선택됨` : '전체 팀'}
+              </div>
+            </div>
+
+            {/* 인원 선택 */}
+            <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '20px', border: '1px solid #E5E8EB'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px'}}>
+                <h3 style={{fontSize: '15px', fontWeight: '700', color: '#191F28'}}>인원 선택</h3>
+                <button 
+                  onClick={toggleAllMembers}
+                  style={{padding: '6px 12px', border: '1px solid #3182F6', backgroundColor: selectedMembers.length === availableMembers.length ? '#3182F6' : '#FFF', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: selectedMembers.length === availableMembers.length ? '#FFF' : '#3182F6', cursor: 'pointer'}}
+                >
+                  {selectedMembers.length === availableMembers.length ? '전체 해제' : '전체 선택'}
+                </button>
+              </div>
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '150px', overflowY: 'auto'}}>
+                {availableMembers.map(member => (
+                  <label key={member.name} style={{display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px', backgroundColor: selectedMembers.includes(member.name) ? '#EBF4FF' : '#F7F8FA', borderRadius: '6px', cursor: 'pointer', border: selectedMembers.includes(member.name) ? '1px solid #3182F6' : '1px solid transparent'}}>
+                    <input type="checkbox" checked={selectedMembers.includes(member.name)} onChange={() => toggleMember(member.name)} style={{display: 'none'}} />
+                    <span style={{fontSize: '13px', color: '#191F28'}}>{member.name}</span>
+                  </label>
+                ))}
+              </div>
+              <div style={{marginTop: '8px', fontSize: '12px', color: '#666'}}>
+                {selectedMembers.length > 0 ? `${selectedMembers.length}명 선택됨` : `전체 인원 (${availableMembers.length}명)`}
+              </div>
+            </div>
+          </div>
+
+          {/* 기간 선택 */}
+          <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '20px', border: '1px solid #E5E8EB', marginBottom: '24px'}}>
+            <h3 style={{fontSize: '15px', fontWeight: '700', color: '#191F28', marginBottom: '12px'}}>📅 기간 선택</h3>
+            <div style={{display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap'}}>
+              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                <span style={{fontSize: '14px', color: '#666'}}>시작일</span>
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={{padding: '10px 14px', border: '1px solid #E5E8EB', borderRadius: '8px', fontSize: '14px'}} />
+              </div>
+              <span style={{color: '#999'}}>~</span>
+              <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                <span style={{fontSize: '14px', color: '#666'}}>종료일</span>
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={{padding: '10px 14px', border: '1px solid #E5E8EB', borderRadius: '8px', fontSize: '14px'}} />
+              </div>
+              <div style={{display: 'flex', gap: '8px'}}>
+                <button onClick={() => { const now = new Date(); setStartDate(`${now.getFullYear()}-01-01`); setEndDate(`${now.getFullYear()}-06-30`); }} style={{padding: '8px 14px', border: '1px solid #E5E8EB', backgroundColor: '#F7F8FA', borderRadius: '8px', fontSize: '13px', cursor: 'pointer'}}>상반기</button>
+                <button onClick={() => { const now = new Date(); setStartDate(`${now.getFullYear()}-07-01`); setEndDate(`${now.getFullYear()}-12-31`); }} style={{padding: '8px 14px', border: '1px solid #E5E8EB', backgroundColor: '#F7F8FA', borderRadius: '8px', fontSize: '13px', cursor: 'pointer'}}>하반기</button>
+                <button onClick={() => { const now = new Date(); setStartDate(`${now.getFullYear()}-01-01`); setEndDate(`${now.getFullYear()}-12-31`); }} style={{padding: '8px 14px', border: '1px solid #E5E8EB', backgroundColor: '#F7F8FA', borderRadius: '8px', fontSize: '13px', cursor: 'pointer'}}>1년 전체</button>
+              </div>
+              <button onClick={runAnalysis} style={{padding: '12px 28px', border: 'none', backgroundColor: '#3182F6', borderRadius: '10px', fontSize: '15px', fontWeight: '700', color: '#FFF', cursor: 'pointer', marginLeft: 'auto'}}>
+                🔍 분석하기
+              </button>
+            </div>
+          </div>
+
+          {/* 분석 결과 */}
+          {analysisResult && (
+            <div style={{backgroundColor: '#FFF', borderRadius: '16px', padding: '24px', border: '1px solid #E5E8EB'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px'}}>
+                <div>
+                  <h3 style={{fontSize: '18px', fontWeight: '700', color: '#191F28', marginBottom: '4px'}}>📋 분석 결과</h3>
+                  <p style={{fontSize: '13px', color: '#666'}}>{analysisResult.startDate} ~ {analysisResult.endDate} ({analysisResult.totalWeeks}주)</p>
+                </div>
+                <button onClick={copyResults} style={{padding: '10px 20px', border: '1px solid #3182F6', backgroundColor: '#FFF', borderRadius: '8px', fontSize: '14px', fontWeight: '600', color: '#3182F6', cursor: 'pointer'}}>
+                  📋 결과 복사
+                </button>
+              </div>
+
+              {/* 팀별 요약 */}
+              <div style={{marginBottom: '24px'}}>
+                <h4 style={{fontSize: '15px', fontWeight: '600', color: '#191F28', marginBottom: '12px'}}>팀별 업로드율</h4>
+                <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '12px'}}>
+                  {Object.entries(analysisResult.byTeam).map(([team, data]) => (
+                    <div key={team} style={{padding: '16px', backgroundColor: '#F7F8FA', borderRadius: '12px'}}>
+                      <div style={{fontSize: '14px', fontWeight: '600', color: '#191F28', marginBottom: '8px'}}>{team}</div>
+                      <div style={{display: 'flex', alignItems: 'baseline', gap: '4px'}}>
+                        <span style={{fontSize: '28px', fontWeight: '700', color: data.percentage >= 50 ? '#03CF5D' : data.percentage >= 25 ? '#FFB800' : '#E54545'}}>{data.percentage}%</span>
+                        <span style={{fontSize: '13px', color: '#666'}}>({data.totalUploaded}/{data.totalPossible}주)</span>
+                      </div>
+                      <div style={{marginTop: '8px', height: '6px', backgroundColor: '#E5E8EB', borderRadius: '3px', overflow: 'hidden'}}>
+                        <div style={{height: '100%', width: `${data.percentage}%`, backgroundColor: data.percentage >= 50 ? '#03CF5D' : data.percentage >= 25 ? '#FFB800' : '#E54545', borderRadius: '3px'}}></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 개인별 상세 */}
+              <div>
+                <h4 style={{fontSize: '15px', fontWeight: '600', color: '#191F28', marginBottom: '12px'}}>개인별 업로드율</h4>
+                <div style={{border: '1px solid #E5E8EB', borderRadius: '12px', overflow: 'hidden'}}>
+                  <table style={{width: '100%', borderCollapse: 'collapse'}}>
+                    <thead>
+                      <tr style={{backgroundColor: '#F7F8FA'}}>
+                        <th style={{padding: '14px 16px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#666', borderBottom: '1px solid #E5E8EB'}}>순위</th>
+                        <th style={{padding: '14px 16px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#666', borderBottom: '1px solid #E5E8EB'}}>이름</th>
+                        <th style={{padding: '14px 16px', textAlign: 'left', fontSize: '13px', fontWeight: '600', color: '#666', borderBottom: '1px solid #E5E8EB'}}>팀</th>
+                        <th style={{padding: '14px 16px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#666', borderBottom: '1px solid #E5E8EB'}}>업로드</th>
+                        <th style={{padding: '14px 16px', textAlign: 'center', fontSize: '13px', fontWeight: '600', color: '#666', borderBottom: '1px solid #E5E8EB'}}>업로드율</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysisResult.individual.map((r, idx) => (
+                        <tr key={r.name} style={{borderBottom: idx < analysisResult.individual.length - 1 ? '1px solid #E5E8EB' : 'none'}}>
+                          <td style={{padding: '14px 16px', fontSize: '14px', color: '#191F28', fontWeight: '600'}}>{idx + 1}</td>
+                          <td style={{padding: '14px 16px', fontSize: '14px', color: '#191F28', fontWeight: '500'}}>{r.name}</td>
+                          <td style={{padding: '14px 16px', fontSize: '13px', color: '#666'}}>{r.team}</td>
+                          <td style={{padding: '14px 16px', fontSize: '14px', color: '#191F28', textAlign: 'center'}}>{r.uploadedWeeks}/{r.totalWeeks}주</td>
+                          <td style={{padding: '14px 16px', textAlign: 'center'}}>
+                            <span style={{padding: '6px 14px', backgroundColor: r.percentage >= 50 ? '#E8FBF0' : r.percentage >= 25 ? '#FFF8E6' : '#FEF1F1', color: r.percentage >= 50 ? '#03CF5D' : r.percentage >= 25 ? '#FFB800' : '#E54545', borderRadius: '20px', fontSize: '14px', fontWeight: '700'}}>{r.percentage}%</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
