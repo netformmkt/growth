@@ -181,17 +181,8 @@
       // Firebase teams 또는 기본 TEAMS_DATA 사용
       const activeTeamsData = React.useMemo(() => {
         if (firebaseTeams) {
-          // order로 정렬 후 변환
-          const sorted = Object.entries(firebaseTeams).sort((a, b) => {
-            const orderA = a[1].order ?? 9999;
-            const orderB = b[1].order ?? 9999;
-            if (orderA !== orderB) return orderA - orderB;
-            const nameA = a[1].displayName || a[0];
-            const nameB = b[1].displayName || b[0];
-            return nameA.localeCompare(nameB);
-          });
           const converted = {};
-          sorted.forEach(([key, data]) => {
+          Object.entries(firebaseTeams).forEach(([key, data]) => {
             const displayName = data.displayName || key;
             converted[displayName] = data.members || [];
           });
