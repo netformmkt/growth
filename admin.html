@@ -1227,6 +1227,8 @@
       const [showAddTeamModal, setShowAddTeamModal] = useState(false);
       const [newTeamName, setNewTeamName] = useState('');
       const [newTeamColor, setNewTeamColor] = useState('#3182F6');
+      const [draggedTeam, setDraggedTeam] = useState(null);
+      const [dragOverTeam, setDragOverTeam] = useState(null);
 
       // Firebase에서 teams 데이터 로드
       useEffect(() => {
@@ -1383,10 +1385,6 @@
         const nameB = b[1].displayName || b[0];
         return nameA.localeCompare(nameB);
       });
-
-      // 드래그 앤 드롭 상태
-      const [draggedTeam, setDraggedTeam] = useState(null);
-      const [dragOverTeam, setDragOverTeam] = useState(null);
 
       // 드래그 시작
       const handleDragStart = (e, teamKey) => {
